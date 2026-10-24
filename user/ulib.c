@@ -163,8 +163,10 @@ sbrklazy(int n)
 }
 
 // Directories tried, in order, by execvp() for a name with no '/'.
-// "" means the name as given (relative to the cwd).
-static char *searchpath[] = { "", "/", 0 };
+// "/" comes first so a process cannot hijack a bare command name by
+// planting an executable in its cwd.  "" means the name as given
+// (relative to the cwd) and is only a fallback.
+static char *searchpath[] = { "/", "", 0 };
 
 // exec() with command path resolution.  A file containing '/' is
 // exec'd as is.  Otherwise each searchpath prefix is tried in turn.
