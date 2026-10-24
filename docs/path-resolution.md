@@ -75,6 +75,14 @@ Call sites reviewed when this was added:
 | `user/usertests.c` (all `exec`) | left: these test `exec` itself |
 | `user/grind.c` | left: already uses paths containing `/` |
 
+## Building
+
+In this tree a plain `make` builds **only the kernel**. After changing or adding
+user programs use `make fs.img` (or `make qemu`, which depends on it) so the
+programs and `fs.img` are rebuilt. `user/uprogs.h` (the program list used by
+`pathtest`) is generated from `UPROGS` by the Makefile: it depends on the
+Makefile, is removed by `make clean`, and is in `.gitignore`.
+
 ## Running the tests
 
 In xv6 (from any directory):
