@@ -210,6 +210,11 @@ check-qemu-version:
 		exit 1; \
 	fi
 
+# Host-side end-to-end test of command path resolution (CPUS=1 and CPUS=3).
+.PHONY: test-path
+test-path:
+	python3 scripts/test_path_e2e.py
+
 .PHONY: fmt
 fmt:
 	clang-format -i $(wildcard kernel/*.[ch] user/*.[ch] mkfs/*.c)
