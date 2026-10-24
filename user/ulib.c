@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
+#include "kernel/param.h"
 #include "kernel/riscv.h"
 #include "kernel/vm.h"
 #include "user/user.h"
@@ -159,4 +160,34 @@ char *
 sbrklazy(int n)
 {
   return sys_sbrk(n, SBRK_LAZY);
+}
+
+// Directories tried, in order, by execvp() for a name with no '/'.
+// "" means the name as given (relative to the cwd).
+static char *searchpath[] = { "", "/", 0 };
+
+// exec() with command path resolution.  A file containing '/' is
+// exec'd as is.  Otherwise each searchpath prefix is tried in turn.
+// Returns -1 on failure; it does not return on success.
+int
+execvp(char *file, char **argv)
+{
+  char buf[MAXPATH];
+  int i, plen, flen;
+
+  if (file == 0 || file[0] == 0)
+    return -1;
+  if (strchr(file, '/'))
+    return exec(file, argv);
+
+  flen = strlen(file);
+  for (i = 0; searchpath[i]; i++) {
+    plen = strlen(searchpath[i]);
+    if (plen + flen >= MAXPATH) // prefix + file + NUL must fit
+      continue;
+    memmove(buf, searchpath[i], plen);
+    memmove(buf + plen, file, flen + 1);
+    exec(buf, argv);
+  }
+  return -1;
 }
