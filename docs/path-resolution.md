@@ -31,8 +31,13 @@ int execvp(char *file, char **argv);
 2. `file` contains a `/` anywhere (`/ls`, `./prog`, `a/b/prog`): `exec(file, argv)`
    is called exactly once. No search, so no fallback to `/`.
 3. Otherwise each prefix in `searchpath[]` (in `user/ulib.c`) is tried in order:
-   1. `""`: the name as given, relative to the cwd (the old xv6 behaviour)
-   2. `"/"`: `"/" + name`
+   1. `"/"`: `"/" + name`
+   2. `""`: the name as given, relative to the cwd (old xv6 behaviour, now only a fallback)
+   **Why `/` first:** this project does not trust the calling process. With
+   the cwd first, any process could hijack a bare command name by planting an
+   executable of that name in its cwd (or in a directory it makes another
+   process `cd` into). Searching the system directory first means a name that
+   exists in `/` always runs the system binary.
 4. Each candidate is built in a `MAXPATH` (128) buffer. If prefix + name + NUL
    does not fit, that candidate is **skipped** (never truncated, never
    overflows). A name of `MAXPATH-1` characters therefore tries only the
@@ -43,8 +48,8 @@ int execvp(char *file, char **argv);
    continues with the next one.
 
 To add a directory (for example `/bin`) change one line:
-`static char *searchpath[] = { "", "/", "/bin/", 0 };` (prefixes must end in `/`
-except the empty one).
+`static char *searchpath[] = { "/bin/", "/", "", 0 };` (prefixes must end in `/`
+except the empty one). Keep `""` last.
 
 ## Using it in your own programs
 
@@ -101,8 +106,9 @@ every boot. Per-command and overall timeouts (`--timeout`, default 2400 s) preve
 
 - The search path is fixed in the source; there is no `PATH` environment
   variable (xv6 has no environment).
-- cwd comes first, so a real executable in the cwd **shadows** the one in `/`.
-  A non-executable file with the same name does not (the search falls through).
+- The cwd is searched last: a program in the cwd runs by bare name only if no
+  program of that name exists in `/`. It can never shadow one in `/`
+  (`pathtest` checks this with a real ELF copy of `/echo` named `./cat`).
 - A name containing `/` is never searched.
 - Names are limited by `MAXPATH`; the shell's `MAXARGS` (10) still applies.
 - Only the shell and callers of `execvp` get this; a raw `exec("ls")` is unchanged.
