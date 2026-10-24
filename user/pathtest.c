@@ -58,6 +58,28 @@ readfile(char *path, char *buf, int n)
   return tot;
 }
 
+// Copy src to dst; returns 0 on success.
+static int
+copyfile(char *src, char *dst)
+{
+  char b[512];
+  int in, out, n, ok = 0;
+
+  in = open(src, O_RDONLY);
+  out = open(dst, O_CREATE | O_WRONLY | O_TRUNC);
+  if (in >= 0 && out >= 0) {
+    ok = 1;
+    while ((n = read(in, b, sizeof(b))) > 0)
+      if (write(out, b, n) != n)
+        ok = 0;
+  }
+  if (in >= 0)
+    close(in);
+  if (out >= 0)
+    close(out);
+  return ok ? 0 : -1;
+}
+
 // Recursively remove path (a file or a directory tree).
 static void
 rmtree(char *path)
@@ -240,16 +262,37 @@ main(int argc, char **argv)
   longname[MAXPATH + 5] = 0;
   expectfail("longname:MAXPATH+5", longname, args);
 
-  // 6. A non-ELF file in the cwd named like a program: exec fails on
-  // it, so execvp must fall back to /cat.
-  writefile("cat", "this is not an ELF file\n");
-  writefile(INFILE, "");
+  // 6. "/" is searched before the cwd, so a file in the cwd named like a
+  // program must not hijack it.  /echo copied to ./cat is a real ELF: it
+  // would print its argument, the real cat prints the file.
   writefile("/pt/data", "from-real-cat\n");
   args[0] = "cat"; args[1] = "/pt/data"; args[2] = 0;
+  if (copyfile("/echo", "cat") < 0) {
+    report("cwd-elf-no-hijack", 0, "(cannot copy /echo)");
+  } else {
+    st = run("cat", args, &to);
+    readfile(OUTFILE, buf, sizeof(buf));
+    report("cwd-elf-no-hijack", st == 0 && strcmp(buf, "from-real-cat\n") == 0, 0);
+  }
+  unlink("cat");
+
+  // A non-ELF file named like a program is harmless too.
+  writefile("cat", "this is not an ELF file\n");
   st = run("cat", args, &to);
   readfile(OUTFILE, buf, sizeof(buf));
-  report("cwd-nonelf-fallback", st == 0 && strcmp(buf, "from-real-cat\n") == 0, 0);
+  report("cwd-nonelf-ignored", st == 0 && strcmp(buf, "from-real-cat\n") == 0, 0);
   unlink("cat");
+
+  // The cwd is still the fallback for names that are not in "/".
+  if (copyfile("/echo", "localprog") < 0) {
+    report("cwd-fallback", 0, "(cannot copy /echo)");
+  } else {
+    args[0] = "localprog"; args[1] = "local"; args[2] = 0;
+    st = run("localprog", args, &to);
+    readfile(OUTFILE, buf, sizeof(buf));
+    report("cwd-fallback", st == 0 && strcmp(buf, "local\n") == 0, 0);
+  }
+  unlink("localprog");
 
   // 7. A command that changes the fs, from three directories down.
   args[0] = "mkdir"; args[1] = "made"; args[2] = 0;
