@@ -152,6 +152,7 @@ UPROGS=\
 	$U/_sync\
 	$U/_login\
 	$U/_whoami\
+	$U/_exit\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
