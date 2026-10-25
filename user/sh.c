@@ -172,10 +172,10 @@ main(void)
       if (chdir(cmd + 3) < 0)
         fprintf(2, "cannot cd %s\n", cmd + 3);
     } else if ((cmd[0] == 'e' && cmd[1] == 'x' && cmd[2] == 'i' && cmd[3] == 't') &&
-               (cmd[4] == '\n' || cmd[4] == '\r' || cmd[4] == ' ' || cmd[4] == '\t' || cmd[4] == '\0')) {
+               (cmd[4] == '\n' || cmd[4] == '\r' || cmd[4] == ' ' || cmd[4] == '\t' || cmd[4] == ';' || cmd[4] == '\0')) {
       exit(0);
     } else if ((cmd[0] == 'l' && cmd[1] == 'o' && cmd[2] == 'g' && cmd[3] == 'o' && cmd[4] == 'u' && cmd[5] == 't') &&
-               (cmd[6] == '\n' || cmd[6] == '\r' || cmd[6] == ' ' || cmd[6] == '\t' || cmd[6] == '\0')) {
+               (cmd[6] == '\n' || cmd[6] == '\r' || cmd[6] == ' ' || cmd[6] == '\t' || cmd[6] == ';' || cmd[6] == '\0')) {
       exit(0);
     } else {
       if (fork1() == 0)
