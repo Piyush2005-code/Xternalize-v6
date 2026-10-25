@@ -23,7 +23,10 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGDIR = os.path.join(ROOT, "scripts", "logs")
-PROMPT = b"$ "
+PROMPTS = (b"admin# ", b"user$ ")   # shell prompts, by uid
+LOGIN_PROMPT = b"Login as (admin/user): "
+PASSWORD_PROMPT = b"Password: "
+ADMIN_PASSWORD = "admin"
 CMD_TIMEOUT = 30        # seconds, default per command
 BOOT_TIMEOUT = 60
 PATHTEST_TIMEOUT = 240
@@ -58,28 +61,50 @@ class Qemu:
             self.log.flush()
         return True
 
+    def wait_for(self, start, text, timeout, what):
+        """Wait until the output since `start` ends with `text`."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if bytes(self.buf[start:]).endswith(text):
+                return
+            if not self._pump(0.2) and self.proc.poll() is not None:
+                raise Timeout("QEMU exited while waiting for %r (%s)" % (text, what))
+        raise Timeout("timed out after %ds waiting for %r (%s)" % (timeout, text, what))
+
+    def send(self, line):
+        self.proc.stdin.write(line.encode() + b"\n")
+        self.proc.stdin.flush()
+
     def wait_prompt(self, start, timeout, what):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.buf[start:].endswith(PROMPT) and b"\n" in self.buf[start:]:
+            tail = bytes(self.buf[start:])
+            if tail.endswith(PROMPTS) and b"\n" in tail:
                 return
             if not self._pump(0.2) and self.proc.poll() is not None:
                 raise Timeout("QEMU exited while waiting for prompt after: " + what)
         raise Timeout("timed out after %ds: %s" % (timeout, what))
 
     def boot(self):
-        self.wait_prompt(0, BOOT_TIMEOUT, "boot")
+        """Boot, log in as admin, wait for the shell prompt."""
+        self.wait_for(0, LOGIN_PROMPT, BOOT_TIMEOUT, "login prompt")
+        mark = len(self.buf)
+        self.send("admin")
+        self.wait_for(mark, PASSWORD_PROMPT, CMD_TIMEOUT, "password prompt")
+        mark = len(self.buf)
+        self.send(ADMIN_PASSWORD)
+        self.wait_prompt(mark, CMD_TIMEOUT, "shell prompt after login")
 
     def run(self, cmd, timeout=CMD_TIMEOUT):
         start = len(self.buf)
-        self.proc.stdin.write(cmd.encode() + b"\n")
-        self.proc.stdin.flush()
+        self.send(cmd)
         self.wait_prompt(start, timeout, cmd)
         text = self.buf[start:].decode(errors="replace").replace("\r", "")
         lines = text.split("\n")[1:]          # drop the echoed command line
         out = "\n".join(lines)
-        if out.endswith("$ "):
-            out = out[:-2]
+        for prompt in PROMPTS:
+            if out.endswith(prompt.decode()):
+                out = out[:-len(prompt)]
         return out
 
     def quit(self):
@@ -131,6 +156,8 @@ def shell_cases(args):
          lambda o: "exec nosuchcmd failed" in o),
         ("/ls absolute", "/ls", CMD_TIMEOUT,
          lambda o: "exec" not in o and "." in names_of(o)),
+        ("whoami (login uid)", "whoami", CMD_TIMEOUT,
+         lambda o: lines_of(o) == ["admin (uid=0)"]),
         ("command list ;", "echo one; echo two", CMD_TIMEOUT,
          lambda o: lines_of(o) == ["one", "two"]),
         ("background &", "echo bgjob &", CMD_TIMEOUT, None),   # checked below
