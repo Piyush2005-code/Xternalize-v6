@@ -26,12 +26,12 @@ BRIDGE_PORT = int(os.environ.get("QEMU_BRIDGE_PORT", "4444"))
 def _send_to_xv6(command: str) -> str:
     """
     Send a shell command to the xv6 instance via the QEMU bridge socket.
-    Returns the output string (or an error message).
+    The bridge sends the command output followed by a newline, then closes
+    the connection — so we read until EOF.
     """
     try:
-        with socket.create_connection((BRIDGE_HOST, BRIDGE_PORT), timeout=10) as sock:
+        with socket.create_connection((BRIDGE_HOST, BRIDGE_PORT), timeout=20) as sock:
             sock.sendall((command.strip() + "\n").encode())
-            # Read until the bridge closes the connection or sends sentinel
             chunks = []
             while True:
                 data = sock.recv(4096)
@@ -40,7 +40,10 @@ def _send_to_xv6(command: str) -> str:
                 chunks.append(data.decode(errors="replace"))
             return "".join(chunks).strip()
     except ConnectionRefusedError:
-        return f"[bridge] Connection refused at {BRIDGE_HOST}:{BRIDGE_PORT}. Is the QEMU bridge running?"
+        return (
+            f"[bridge] Connection refused at {BRIDGE_HOST}:{BRIDGE_PORT}. "
+            "Start the bridge first: python agent/qemu_bridge.py"
+        )
     except Exception as exc:
         return f"[bridge] Error: {exc}"
 

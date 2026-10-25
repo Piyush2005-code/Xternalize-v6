@@ -84,38 +84,56 @@ class MCPClient:
             pass
 
 
+def _on_tool_call(tool_name: str, args: dict, result: str):
+    """Print a compact one-liner whenever the agent uses a tool."""
+    arg_summary = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else ""
+    print(f"  ⚙  {tool_name}({arg_summary})")
+
+
 def main():
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
-        print("[client] ERROR: OPENROUTER_API_KEY environment variable is not set.")
+        print("ERROR: OPENROUTER_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    print("[client] Starting MCP server …")
+    print("Starting MCP server …", end=" ", flush=True)
     client = MCPClient(SERVER_SCRIPT)
-
     tools = client.list_tools()
-    print(f"[client] Discovered {len(tools)} tool(s): {[t['name'] for t in tools]}")
+    print(f"ready ({len(tools)} tools)\n")
 
     agent = LLMAgent(
         tools=tools,
         tool_executor=client.call_tool,
         api_key=api_key,
+        on_tool_call=_on_tool_call,
     )
 
-    print("[client] xv6 AI Agent ready. Type your message (or 'exit' to quit).\n")
+    print("xv6 AI Agent  —  chat with your OS. Type 'reset' to clear history, 'exit' to quit.\n")
+    print("─" * 60)
+
     try:
         while True:
             try:
-                user_input = input("you> ").strip()
+                user_input = input("\nyou > ").strip()
             except (EOFError, KeyboardInterrupt):
+                print()
                 break
-            if not user_input or user_input.lower() in ("exit", "quit"):
+
+            if not user_input:
+                continue
+            if user_input.lower() in ("exit", "quit"):
                 break
+            if user_input.lower() == "reset":
+                agent.reset()
+                print("  (conversation history cleared)")
+                continue
+
             answer = agent.run(user_input)
-            print(f"\nagent> {answer}\n")
+            print(f"\nagent > {answer}")
+
     finally:
         client.close()
-        print("[client] Bye.")
+        print("\nBye.")
 
 
 if __name__ == "__main__":
