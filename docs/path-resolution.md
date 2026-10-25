@@ -71,7 +71,7 @@ Call sites reviewed when this was added:
 | Site | Decision |
 |------|----------|
 | `user/sh.c` | **changed** to `execvp` |
-| `user/init.c` `exec("sh")` | left: runs once at boot with cwd `/`, no benefit |
+| `user/init.c` `exec("login")`, `user/login.c` `exec("sh")` | left: run at boot / login with cwd `/`, no benefit |
 | `user/usertests.c` (all `exec`) | left: these test `exec` itself |
 | `user/grind.c` | left: already uses paths containing `/` |
 
@@ -96,7 +96,9 @@ It runs **every program in `UPROGS`** by bare name (the list is generated from
 the Makefile into `user/uprogs.h`, so programs your teammates add are covered
 automatically). Output goes to a scratch file; a watchdog kills any program
 still running after ~3 s (counted as resolved: it started). Skipped:
-`init` (respawns a shell forever) and `grind` (never exits, litters the fs).
+`init` (respawns `login` forever), `grind` (never exits, litters the fs) and
+`login` (on EOF `gets()` still returns its buffer, so `login` loops printing its
+banner instead of exiting).
 `usertests` is run as `usertests -x` and `pathtest` as `pathtest --probe` so
 they exit immediately. `/pt` is removed at exit, including after failures.
 
@@ -105,7 +107,8 @@ On the host:
     make test-path                              # CPUS=1 then CPUS=3, incl. usertests -q
     python3 scripts/test_path_e2e.py --cpus 1 --skip-usertests   # quick check
 
-Standard-library Python 3 only. It boots QEMU, types into the real shell, prints
+Standard-library Python 3 only. It boots QEMU, logs in as `admin` (password
+`admin`) at the login screen, types into the real shell (prompt `admin# `), prints
 a PASS/FAIL table and exits non-zero on any failure. Raw QEMU logs are saved to
 `scripts/logs/path_e2e_<cpus>.log`. `fs.img` is backed up first and restored after
 every boot. Per-command and overall timeouts (`--timeout`, default 2400 s) prevent hangs.
