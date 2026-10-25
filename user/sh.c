@@ -134,7 +134,10 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
-  write(2, "$ ", 2);
+  if (getuid() == 0)
+    write(2, "admin# ", 7);
+  else
+    write(2, "user$ ", 6);
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if (buf[0] == 0) // EOF
@@ -168,6 +171,12 @@ main(void)
       cmd[strlen(cmd) - 1] = 0; // chop \n
       if (chdir(cmd + 3) < 0)
         fprintf(2, "cannot cd %s\n", cmd + 3);
+    } else if ((cmd[0] == 'e' && cmd[1] == 'x' && cmd[2] == 'i' && cmd[3] == 't') &&
+               (cmd[4] == '\n' || cmd[4] == '\r' || cmd[4] == ' ' || cmd[4] == '\t' || cmd[4] == '\0')) {
+      exit(0);
+    } else if ((cmd[0] == 'l' && cmd[1] == 'o' && cmd[2] == 'g' && cmd[3] == 'o' && cmd[4] == 'u' && cmd[5] == 't') &&
+               (cmd[6] == '\n' || cmd[6] == '\r' || cmd[6] == ' ' || cmd[6] == '\t' || cmd[6] == '\0')) {
+      exit(0);
     } else {
       if (fork1() == 0)
         runcmd(parsecmd(cmd));
