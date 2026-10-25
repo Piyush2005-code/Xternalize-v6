@@ -110,3 +110,23 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_getuid(void)
+{
+  return myproc()->uid;
+}
+
+uint64
+sys_setuid(void)
+{
+  int uid;
+  argint(0, &uid);
+  struct proc *p = myproc();
+  // Only admin (uid == 0) can change uid
+  if (p->uid != 0 && uid != p->uid)
+    return -1;
+  p->uid = uid;
+  return 0;
+}
+
