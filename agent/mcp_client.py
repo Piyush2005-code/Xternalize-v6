@@ -10,6 +10,7 @@ Usage:
 """
 
 import json
+from dotenv import load_dotenv
 import os
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from llm_agent import LLMAgent
 SERVER_SCRIPT = Path(__file__).parent / "mcp_server.py"
 _req_id = 0
 
+load_dotenv()
 
 def _next_id() -> int:
     global _req_id
@@ -91,7 +93,7 @@ def _on_tool_call(tool_name: str, args: dict, result: str):
 
 
 def main():
-    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("ERROR: OPENROUTER_API_KEY environment variable is not set.")
         sys.exit(1)
