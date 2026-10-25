@@ -8,7 +8,8 @@ static void
 trim(char *s)
 {
   int len = strlen(s);
-  while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r')) {
+  while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' ||
+                     s[len - 1] == ' ' || s[len - 1] == '\t')) {
     s[len - 1] = '\0';
     len--;
   }
@@ -25,15 +26,21 @@ main(void)
     printf("\n=== xv6 Login ===\n");
     printf("Login as (admin/user): ");
     memset(user, 0, sizeof(user));
-    if (gets(user, sizeof(user)) == 0) {
+    gets(user, sizeof(user));
+    if (user[0] == 0) { // EOF (Ctrl+D)
       exit(0);
     }
     trim(user);
 
-    if (strcmp(user, "admin") == 0) {
+    char *u = user;
+    while (*u == ' ' || *u == '\t')
+      u++;
+
+    if (strcmp(u, "admin") == 0) {
       printf("Password: ");
       memset(pass, 0, sizeof(pass));
-      if (gets(pass, sizeof(pass)) == 0) {
+      gets(pass, sizeof(pass));
+      if (pass[0] == 0) { // EOF (Ctrl+D)
         exit(0);
       }
       trim(pass);
@@ -50,7 +57,7 @@ main(void)
       } else {
         printf("Login incorrect: wrong password.\n");
       }
-    } else if (strcmp(user, "user") == 0) {
+    } else if (strcmp(u, "user") == 0) {
       // Normal user: log in without any password
       if (setuid(1) < 0) {
         printf("login: setuid failed\n");
@@ -61,8 +68,8 @@ main(void)
       printf("login: exec sh failed\n");
       exit(1);
     } else {
-      if (strlen(user) > 0) {
-        printf("Unknown user '%s'. Please enter 'admin' or 'user'.\n", user);
+      if (strlen(u) > 0) {
+        printf("Unknown user '%s'. Please enter 'admin' or 'user'.\n", u);
       }
     }
   }
