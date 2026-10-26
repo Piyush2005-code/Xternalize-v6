@@ -96,9 +96,8 @@ It runs **every program in `UPROGS`** by bare name (the list is generated from
 the Makefile into `user/uprogs.h`, so programs your teammates add are covered
 automatically). Output goes to a scratch file; a watchdog kills any program
 still running after ~3 s (counted as resolved: it started). Skipped:
-`init` (respawns `login` forever), `grind` (never exits, litters the fs) and
-`login` (on EOF `gets()` still returns its buffer, so `login` loops printing its
-banner instead of exiting).
+`init` (respawns `login` forever) and `grind` (never exits, litters the fs).
+`login` is run with an empty stdin, where it sees EOF and exits.
 `usertests` is run as `usertests -x` and `pathtest` as `pathtest --probe` so
 they exit immediately. `/pt` is removed at exit, including after failures.
 
