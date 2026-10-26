@@ -153,6 +153,14 @@ UPROGS=\
 	$U/_login\
 	$U/_whoami\
 	$U/_exit\
+	$U/_pathtest\
+
+# pathtest sweeps every program in UPROGS, so generate its name list.
+$U/uprogs.h: Makefile
+	@echo "// Generated from UPROGS in the Makefile. Do not edit." > $@
+	@echo "static char *uprogs[] = { $(foreach p,$(UPROGS),\"$(patsubst $U/_%,%,$(p))\",) 0 };" >> $@
+
+$U/pathtest.o: $U/uprogs.h
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
@@ -164,7 +172,7 @@ clean:
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img \
 	mkfs/mkfs .gdbinit \
-        $U/usys.S \
+        $U/usys.S $U/uprogs.h \
 	$(UPROGS)
 
 # try to generate a unique GDB port
@@ -201,6 +209,11 @@ check-qemu-version:
 		echo "ERROR: Need qemu version >= $(MIN_QEMU_VERSION)"; \
 		exit 1; \
 	fi
+
+# Host-side end-to-end test of command path resolution (CPUS=1 and CPUS=3).
+.PHONY: test-path
+test-path:
+	python3 scripts/test_path_e2e.py
 
 .PHONY: fmt
 fmt:
