@@ -184,11 +184,8 @@ sweep(void)
     argv[0] = uprogs[i];
     argv[1] = 0;
     argv[2] = 0;
-    // init respawns login forever; grind never exits and litters the fs;
-    // login never sees EOF (gets() always returns its buffer), so on an
-    // empty stdin it loops printing its banner.
-    if (strcmp(uprogs[i], "init") == 0 || strcmp(uprogs[i], "grind") == 0 ||
-        strcmp(uprogs[i], "login") == 0) {
+    // init respawns login forever; grind never exits and litters the fs.
+    if (strcmp(uprogs[i], "init") == 0 || strcmp(uprogs[i], "grind") == 0) {
       printf("SKIP bare:%s (never exits)\n", uprogs[i]);
       continue;
     }
