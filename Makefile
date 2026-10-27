@@ -193,6 +193,19 @@ QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 qemu: check-qemu-version $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
 
+# Bridge mode: replace -nographic (which grabs serial-0 for stdio) with an
+# explicit -display none so that serial-0 is free to be a TCP socket.
+# agent/qemu_bridge.py connects to :XV6_SERIAL_PORT and forwards commands.
+XV6_SERIAL_PORT ?= 5555
+QEMUOPTS_BRIDGE  = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS)
+QEMUOPTS_BRIDGE += -global virtio-mmio.force-legacy=false
+QEMUOPTS_BRIDGE += -drive file=fs.img,if=none,format=raw,id=x0
+QEMUOPTS_BRIDGE += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+QEMUOPTS_BRIDGE += -display none -monitor none
+QEMUOPTS_BRIDGE += -serial tcp::$(XV6_SERIAL_PORT),server,nowait
+qemu-bridge: check-qemu-version $K/kernel fs.img
+	$(QEMU) $(QEMUOPTS_BRIDGE)
+
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 

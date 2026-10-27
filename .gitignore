@@ -12,3 +12,7 @@ _*
 TAGS
 /user/uprogs.h
 /scripts/logs/
+
+
+## Remove all the .env files
+**.env**
