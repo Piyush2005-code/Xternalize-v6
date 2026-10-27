@@ -226,7 +226,7 @@ check-qemu-version:
 # Host-side end-to-end test of command path resolution (CPUS=1 and CPUS=3).
 .PHONY: test-path
 test-path:
-	python3 scripts/test_path_e2e.py
+	python3 scripts/tests/test_path_e2e.py
 
 .PHONY: fmt
 fmt:
