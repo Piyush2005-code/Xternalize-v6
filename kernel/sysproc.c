@@ -131,4 +131,3 @@ sys_setuid(void)
   p->uid = uid;
   return 0;
 }
-
