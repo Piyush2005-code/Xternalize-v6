@@ -17,8 +17,8 @@
 #define EXECFAIL 127 // child: execvp() returned -1
 #define TIMEOUT  30  // ticks before a runaway program is killed
 
-#define ROOT "/pt"
-#define DEEP "/pt/a/b"
+#define ROOT    "/pt"
+#define DEEP    "/pt/a/b"
 #define INFILE  "/pt/in"
 #define OUTFILE "/pt/out"
 
@@ -29,7 +29,8 @@ report(char *name, int ok, char *note)
 {
   if (!ok)
     nfail++;
-  printf("%s %s%s%s\n", ok ? "PASS" : "FAIL", name, note ? " " : "", note ? note : "");
+  printf("%s %s%s%s\n", ok ? "PASS" : "FAIL", name, note ? " " : "",
+         note ? note : "");
 }
 
 static void
@@ -96,7 +97,8 @@ rmtree(char *path)
     if (fd >= 0) {
       n = strlen(path);
       while (read(fd, &de, sizeof(de)) == sizeof(de)) {
-        if (de.inum == 0 || strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
+        if (de.inum == 0 || strcmp(de.name, ".") == 0 ||
+            strcmp(de.name, "..") == 0)
           continue;
         if (n + 1 + DIRSIZ >= MAXPATH)
           continue;
@@ -200,7 +202,8 @@ sweep(void)
     if (5 + strlen(uprogs[i]) < sizeof(name))
       strcpy(name + 5, uprogs[i]);
     st = run(uprogs[i], argv, &to);
-    report(name, st != EXECFAIL && st != -2, to ? "(started, killed after timeout)" : 0);
+    report(name, st != EXECFAIL && st != -2,
+           to ? "(started, killed after timeout)" : 0);
   }
 }
 
@@ -219,7 +222,8 @@ main(int argc, char **argv)
   chdir("/");
   rmtree(ROOT);
 
-  if (mkdir(ROOT) < 0 || mkdir(ROOT "/a") < 0 || mkdir(DEEP) < 0 || chdir(DEEP) < 0) {
+  if (mkdir(ROOT) < 0 || mkdir(ROOT "/a") < 0 || mkdir(DEEP) < 0 ||
+      chdir(DEEP) < 0) {
     printf("pathtest: cannot set up %s\n", DEEP);
     chdir("/");
     rmtree(ROOT);
@@ -231,13 +235,16 @@ main(int argc, char **argv)
   sweep();
 
   // 2. Absolute path.
-  args[0] = "echo"; args[1] = "abs"; args[2] = 0;
+  args[0] = "echo";
+  args[1] = "abs";
+  args[2] = 0;
   st = run("/echo", args, &to);
   readfile(OUTFILE, buf, sizeof(buf));
   report("absolute:/echo", st == 0 && strcmp(buf, "abs\n") == 0, 0);
 
   // 3. Names with a slash are never searched.
-  args[0] = "x"; args[1] = 0;
+  args[0] = "x";
+  args[1] = 0;
   expectfail("slash:./nosuch", "./nosuch", args);
   args[0] = "echo";
   expectfail("slash:./echo-no-fallback", "./echo", args);
@@ -266,13 +273,16 @@ main(int argc, char **argv)
   // program must not hijack it.  /echo copied to ./cat is a real ELF: it
   // would print its argument, the real cat prints the file.
   writefile("/pt/data", "from-real-cat\n");
-  args[0] = "cat"; args[1] = "/pt/data"; args[2] = 0;
+  args[0] = "cat";
+  args[1] = "/pt/data";
+  args[2] = 0;
   if (copyfile("/echo", "cat") < 0) {
     report("cwd-elf-no-hijack", 0, "(cannot copy /echo)");
   } else {
     st = run("cat", args, &to);
     readfile(OUTFILE, buf, sizeof(buf));
-    report("cwd-elf-no-hijack", st == 0 && strcmp(buf, "from-real-cat\n") == 0, 0);
+    report("cwd-elf-no-hijack", st == 0 && strcmp(buf, "from-real-cat\n") == 0,
+           0);
   }
   unlink("cat");
 
@@ -280,14 +290,17 @@ main(int argc, char **argv)
   writefile("cat", "this is not an ELF file\n");
   st = run("cat", args, &to);
   readfile(OUTFILE, buf, sizeof(buf));
-  report("cwd-nonelf-ignored", st == 0 && strcmp(buf, "from-real-cat\n") == 0, 0);
+  report("cwd-nonelf-ignored", st == 0 && strcmp(buf, "from-real-cat\n") == 0,
+         0);
   unlink("cat");
 
   // The cwd is still the fallback for names that are not in "/".
   if (copyfile("/echo", "localprog") < 0) {
     report("cwd-fallback", 0, "(cannot copy /echo)");
   } else {
-    args[0] = "localprog"; args[1] = "local"; args[2] = 0;
+    args[0] = "localprog";
+    args[1] = "local";
+    args[2] = 0;
     st = run("localprog", args, &to);
     readfile(OUTFILE, buf, sizeof(buf));
     report("cwd-fallback", st == 0 && strcmp(buf, "local\n") == 0, 0);
@@ -295,19 +308,30 @@ main(int argc, char **argv)
   unlink("localprog");
 
   // 7. A command that changes the fs, from three directories down.
-  args[0] = "mkdir"; args[1] = "made"; args[2] = 0;
+  args[0] = "mkdir";
+  args[1] = "made";
+  args[2] = 0;
   st = run("mkdir", args, &to);
-  report("nested:mkdir", st == 0 && stat("made", &sst) == 0 && sst.type == T_DIR, 0);
+  report("nested:mkdir",
+         st == 0 && stat("made", &sst) == 0 && sst.type == T_DIR, 0);
 
   // 8. argv is passed through unchanged (including empty and spaced args).
-  args[0] = "echo"; args[1] = "alpha"; args[2] = "be ta"; args[3] = ""; args[4] = "-n"; args[5] = 0;
+  args[0] = "echo";
+  args[1] = "alpha";
+  args[2] = "be ta";
+  args[3] = "";
+  args[4] = "-n";
+  args[5] = 0;
   st = run("echo", args, &to);
   readfile(OUTFILE, buf, sizeof(buf));
-  report("argv-passthrough", st == 0 && strcmp(buf, "alpha be ta  -n\n") == 0, 0);
+  report("argv-passthrough", st == 0 && strcmp(buf, "alpha be ta  -n\n") == 0,
+         0);
 
   // 9. Same from the root directory.
   chdir("/");
-  args[0] = "echo"; args[1] = "root"; args[2] = 0;
+  args[0] = "echo";
+  args[1] = "root";
+  args[2] = 0;
   st = run("echo", args, &to);
   readfile(OUTFILE, buf, sizeof(buf));
   report("cwd-root:echo", st == 0 && strcmp(buf, "root\n") == 0, 0);
