@@ -33,6 +33,24 @@ class QEMU(object):
         self.outbytes = bytearray()
         self.reported = 0
         time.sleep(1)
+        self.login()
+
+    # Boot goes init -> login, so log in as admin before any test input.
+    def login(self, timeout=60):
+        self.wait(r'Login as \(admin/user\): ', timeout)
+        self.cmd("admin\n")
+        self.wait(r'Password: ', 10)
+        self.cmd("admin\n")
+        self.wait(r'admin# ', 10)
+
+    def wait(self, regexp, timeout):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self.read()
+            if re.search(regexp, self.output):
+                return
+            time.sleep(0.2)
+        self.error(regexp)
 
     def reset_fs(self):
         try:
