@@ -16,3 +16,4 @@ TAGS
 
 ## Remove all the .env files
 **.env**
+__pycache__/
