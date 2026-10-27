@@ -4,7 +4,7 @@
 Builds xv6, boots `make qemu CPUS=<n>`, types commands at the shell and checks
 the output, for CPUS=1 and CPUS=3.  Standard library only.
 
-  ./scripts/test_path_e2e.py [--cpus 1 3] [--skip-usertests] [--timeout SECONDS]
+  ./scripts/tests/test_path_e2e.py [--cpus 1 3] [--skip-usertests] [--timeout SECONDS]
 
 The raw QEMU console log of each run is saved to scripts/logs/path_e2e_<n>.log.
 fs.img is backed up first and restored after every boot, so a run never leaves
@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOGDIR = os.path.join(ROOT, "scripts", "logs")
 PROMPTS = (b"admin# ", b"user$ ")   # shell prompts, by uid
 LOGIN_PROMPT = b"Login as (admin/user): "
