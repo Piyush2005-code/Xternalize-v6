@@ -15,7 +15,7 @@ Now there is a user-space library function, and the shell uses it:
 | `user/ulib.c`, `user/user.h` | new `int execvp(char *file, char **argv)` |
 | `user/sh.c` | `EXECCMD` case calls `execvp()` instead of `exec()` |
 | `user/pathtest.c` | in-xv6 test (added to `UPROGS`) |
-| `scripts/test_path_e2e.py`, `make test-path` | host-side end-to-end test |
+| `scripts/tests/test_path_e2e.py`, `make test-path` | host-side end-to-end test |
 | `Makefile`, `.gitignore` | `pathtest` in `UPROGS`; generated `user/uprogs.h` |
 
 There are **no kernel, `fs.h` or `mkfs` changes**, so `make clean` is **not**
@@ -104,7 +104,7 @@ they exit immediately. `/pt` is removed at exit, including after failures.
 On the host:
 
     make test-path                              # CPUS=1 then CPUS=3, incl. usertests -q
-    python3 scripts/test_path_e2e.py --cpus 1 --skip-usertests   # quick check
+    python3 scripts/tests/test_path_e2e.py --cpus 1 --skip-usertests   # quick check
 
 Standard-library Python 3 only. It boots QEMU, logs in as `admin` (password
 `admin`) at the login screen, types into the real shell (prompt `admin# `), prints
