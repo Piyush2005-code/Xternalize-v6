@@ -45,6 +45,11 @@ kexec(char *path, char **argv)
   }
   ilock(ip);
 
+  // Check execute permission
+  if (!check_perm(ip, PERM_X)) {
+    goto bad;
+  }
+
   // Read the ELF header.
   if (readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;

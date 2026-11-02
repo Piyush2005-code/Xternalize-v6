@@ -91,6 +91,9 @@ sys_write(void)
   if (argfd(0, 0, &f) < 0)
     return -1;
 
+  if (f->type == FD_INODE && !check_perm(f->ip, PERM_W))
+    return -1;
+
   return filewrite(f, p, n);
 }
 
@@ -216,6 +219,8 @@ sys_unlink(void)
   }
 
   ilock(dp);
+  if (!check_perm(dp, PERM_W))
+    goto bad;
 
   // Cannot unlink "." or "..".
   if (namecmp(name, ".") == 0 || namecmp(name, "..") == 0)
@@ -224,6 +229,10 @@ sys_unlink(void)
   if ((ip = dirlookup(dp, name, &off)) == 0)
     goto bad;
   ilock(ip);
+  if (!check_perm(ip, PERM_W)) {
+    iunlockput(ip);
+    goto bad;
+  }
 
   if (ip->nlink < 1)
     panic("unlink: nlink < 1");
@@ -266,7 +275,7 @@ create(char *path, short type, short major, short minor)
 
   ilock(dp);
 
-  if (dp->nlink == 0) {
+  if (dp->nlink == 0 || !check_perm(dp, PERM_W)) {
     iunlockput(dp);
     return 0;
   }
@@ -280,8 +289,13 @@ create(char *path, short type, short major, short minor)
   if ((ip = dirlookup(dp, name, 0)) != 0) {
     iunlockput(dp);
     ilock(ip);
-    if (type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if (type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE)) {
+      if (!check_perm(ip, PERM_W)) {
+        iunlockput(ip);
+        return 0;
+      }
       return ip;
+    }
     iunlockput(ip);
     return 0;
   }
@@ -295,6 +309,8 @@ create(char *path, short type, short major, short minor)
   ip->major = major;
   ip->minor = minor;
   ip->nlink = 1;
+  ip->uid = myproc() ? myproc()->uid : 0;
+  ip->mode = (type == T_DIR) ? 075 : ((type == T_DEVICE) ? 066 : 064);
   iupdate(ip);
 
   if (type == T_DIR) { // Create . and .. entries.
@@ -360,6 +376,17 @@ sys_open(void)
   }
 
   if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if (!(omode & O_WRONLY) && !check_perm(ip, PERM_R)) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  if (((omode & O_WRONLY) || (omode & O_RDWR) || (omode & O_TRUNC)) && !check_perm(ip, PERM_W)) {
     iunlockput(ip);
     end_op();
     return -1;
