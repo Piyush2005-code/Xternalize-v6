@@ -125,6 +125,7 @@ found:
   p->pid = allocpid();
   p->state = USED;
   p->uid = 0;
+  p->spec = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -168,6 +169,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->spec = 0;
   p->state = UNUSED;
 }
 
@@ -283,6 +285,7 @@ kfork(void)
   np->trapframe->a0 = 0;
 
   np->uid = p->uid;
+  np->spec = p->spec;
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)

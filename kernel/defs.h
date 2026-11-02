@@ -5,6 +5,7 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
+struct shadow;
 struct spinlock;
 struct sleeplock;
 struct stat;
@@ -63,9 +64,16 @@ void            kinit(void);
 
 // log.c
 void            initlog(int, struct superblock*);
-void            log_write(struct buf*);
+int             log_write(struct buf*);
 void            begin_op(void);
 void            end_op(void);
+
+// shadow.c
+void            shadow_init(void);
+struct shadow*  shadow_find(int, uint, uint);
+struct shadow*  shadow_alloc(int, uint, uint, struct buf*);
+void            shadow_free_all(int);
+int             shadow_count(int);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);
