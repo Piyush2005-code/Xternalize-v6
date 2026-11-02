@@ -137,6 +137,39 @@ static uint64 (*syscalls[])(void) = {
   // clang-format on
 };
 
+#define PRIV_USER  0
+#define PRIV_ADMIN 1
+
+// Table mapping each syscall to required privilege (admin only or everyone)
+static int syscall_privileges[] = {
+  // clang-format off
+  [SYS_fork]    = PRIV_USER,
+  [SYS_exit]    = PRIV_USER,
+  [SYS_wait]    = PRIV_USER,
+  [SYS_pipe]    = PRIV_USER,
+  [SYS_read]    = PRIV_USER,
+  [SYS_kill]    = PRIV_USER,
+  [SYS_exec]    = PRIV_USER,
+  [SYS_fstat]   = PRIV_USER,
+  [SYS_chdir]   = PRIV_USER,
+  [SYS_dup]     = PRIV_USER,
+  [SYS_getpid]  = PRIV_USER,
+  [SYS_sbrk]    = PRIV_USER,
+  [SYS_pause]   = PRIV_USER,
+  [SYS_uptime]  = PRIV_USER,
+  [SYS_open]    = PRIV_USER,
+  [SYS_write]   = PRIV_USER,
+  [SYS_mknod]   = PRIV_ADMIN,
+  [SYS_unlink]  = PRIV_USER,
+  [SYS_link]    = PRIV_USER,
+  [SYS_mkdir]   = PRIV_USER,
+  [SYS_close]   = PRIV_USER,
+  [SYS_sync]    = PRIV_ADMIN,
+  [SYS_getuid]  = PRIV_USER,
+  [SYS_setuid]  = PRIV_ADMIN,
+  // clang-format on
+};
+
 void
 syscall(void)
 {
@@ -145,6 +178,12 @@ syscall(void)
 
   num = p->trapframe->a7;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    // Check privilege level
+    if (num < NELEM(syscall_privileges) && syscall_privileges[num] == PRIV_ADMIN && p->uid != 0) {
+      printk("%d %s: syscall %d denied for uid %d\n", p->pid, p->name, num, p->uid);
+      p->trapframe->a0 = -1;
+      return;
+    }
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();
