@@ -244,7 +244,7 @@ ialloc(ushort type)
   din.size = xint(0);
   din.uid = xshort(0); // build-time files owned by admin
   din.mode = xshort(
-      type == T_DIR ? MODE_DIR : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE));
+    type == T_DIR ? MODE_DIR : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE));
   winode(inum, &din);
   return inum;
 }
