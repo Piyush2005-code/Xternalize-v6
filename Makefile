@@ -229,6 +229,12 @@ check-qemu-version:
 test-path:
 	python3 scripts/tests/test_path_e2e.py
 
+# Host-side end-to-end test of file permissions and syscall privileges
+# (admin and user sessions, CPUS=1 and CPUS=3).
+.PHONY: test-perm
+test-perm:
+	python3 scripts/tests/test_perm_e2e.py
+
 .PHONY: fmt
 fmt:
 	clang-format -i $(wildcard kernel/*.[ch] user/*.[ch] mkfs/*.c)
