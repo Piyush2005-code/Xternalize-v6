@@ -154,6 +154,7 @@ UPROGS=\
 	$U/_whoami\
 	$U/_exit\
 	$U/_pathtest\
+	$U/_permtest\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
@@ -227,6 +228,12 @@ check-qemu-version:
 .PHONY: test-path
 test-path:
 	python3 scripts/tests/test_path_e2e.py
+
+# Host-side end-to-end test of file permissions and syscall privileges
+# (admin and user sessions, CPUS=1 and CPUS=3).
+.PHONY: test-perm
+test-perm:
+	python3 scripts/tests/test_perm_e2e.py
 
 .PHONY: fmt
 fmt:
