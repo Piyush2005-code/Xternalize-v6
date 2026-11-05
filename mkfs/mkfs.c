@@ -85,7 +85,7 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  assert((BSIZE % sizeof(struct dinode)) == 0);
+  static_assert(sizeof(struct dinode) == 68, "dinode size must be 68 bytes");
   assert((BSIZE % sizeof(struct dirent)) == 0);
 
   fsfd = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0666);
@@ -148,12 +148,20 @@ main(int argc, char *argv[])
     // The binaries are named _rm, _cat, etc. to keep the
     // build operating system from trying to execute them
     // in place of system binaries like rm and cat.
-    if (shortname[0] == '_')
+    int is_bin = 0;
+    if (shortname[0] == '_') {
+      is_bin = 1;
       shortname += 1;
+    }
 
     assert(strlen(shortname) <= DIRSIZ);
 
     inum = ialloc(T_FILE);
+    if (is_bin) {
+      rinode(inum, &din);
+      din.mode = xshort(MODE_EXEC);
+      winode(inum, &din);
+    }
 
     bzero(&de, sizeof(de));
     de.inum = xshort(inum);
@@ -171,6 +179,7 @@ main(int argc, char *argv[])
   off = xint(din.size);
   off = ((off / BSIZE) + 1) * BSIZE;
   din.size = xint(off);
+  din.mode = xshort(MODE_ROOT);
   winode(rootino, &din);
 
   balloc(freeblock);
@@ -233,6 +242,9 @@ ialloc(ushort type)
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xint(0);
+  din.uid = xshort(0); // build-time files owned by admin
+  din.mode = xshort(
+    type == T_DIR ? MODE_DIR : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE));
   winode(inum, &din);
   return inum;
 }

@@ -36,6 +36,10 @@ int             filestat(struct file*, uint64 addr);
 int             filewrite(struct file*, uint64, int n);
 
 // fs.c
+#define PERM_X 0x1
+#define PERM_W 0x2
+#define PERM_R 0x4
+int             check_perm(struct inode*, int);
 void            fsinit(int);
 int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);

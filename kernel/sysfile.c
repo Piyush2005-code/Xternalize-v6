@@ -155,6 +155,10 @@ sys_link(void)
   if ((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
+  if (!check_perm(dp, PERM_W)) {
+    iunlockput(dp);
+    goto bad;
+  }
   // dp may have been unlinked while we resolved it; linking into an
   // orphaned directory leaks ip (itrunc discards the record without
   // dropping ip->nlink).  create() has the same guard.
@@ -216,6 +220,8 @@ sys_unlink(void)
   }
 
   ilock(dp);
+  if (!check_perm(dp, PERM_W))
+    goto bad;
 
   // Cannot unlink "." or "..".
   if (namecmp(name, ".") == 0 || namecmp(name, "..") == 0)
@@ -224,6 +230,10 @@ sys_unlink(void)
   if ((ip = dirlookup(dp, name, &off)) == 0)
     goto bad;
   ilock(ip);
+  if (!check_perm(ip, PERM_W)) {
+    iunlockput(ip);
+    goto bad;
+  }
 
   if (ip->nlink < 1)
     panic("unlink: nlink < 1");
@@ -266,7 +276,7 @@ create(char *path, short type, short major, short minor)
 
   ilock(dp);
 
-  if (dp->nlink == 0) {
+  if (dp->nlink == 0 || !check_perm(dp, PERM_W)) {
     iunlockput(dp);
     return 0;
   }
@@ -360,6 +370,18 @@ sys_open(void)
   }
 
   if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if (!(omode & O_WRONLY) && !check_perm(ip, PERM_R)) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  if (((omode & O_WRONLY) || (omode & O_RDWR) || (omode & O_TRUNC)) &&
+      !check_perm(ip, PERM_W)) {
     iunlockput(ip);
     end_op();
     return -1;

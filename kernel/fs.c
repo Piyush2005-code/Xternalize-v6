@@ -210,6 +210,9 @@ ialloc(uint dev, short type)
     if (dip->type == 0) { // a free inode
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
+      dip->uid = myproc() ? myproc()->uid : 0;
+      dip->mode = (type == T_DIR) ? MODE_DIR
+                                  : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE);
       log_write(bp); // mark it allocated on the disk
       brelse(bp);
       return iget(dev, inum);
@@ -238,6 +241,8 @@ iupdate(struct inode *ip)
   dip->nlink = ip->nlink;
   dip->size = ip->size;
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+  dip->uid = ip->uid;
+  dip->mode = ip->mode;
   log_write(bp);
   brelse(bp);
 }
@@ -311,11 +316,25 @@ ilock(struct inode *ip)
     ip->nlink = dip->nlink;
     ip->size = dip->size;
     memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
+    ip->uid = dip->uid;
+    ip->mode = dip->mode;
     brelse(bp);
     ip->valid = 1;
     if (ip->type == 0)
       panic("ilock: no type");
   }
+}
+
+// Permissions do not apply to admin.
+// Mode is 6 bits: [Owner 3-bit: rwx] [Other 3-bit: rwx]
+int
+check_perm(struct inode *ip, int perm)
+{
+  struct proc *p = myproc();
+  if (!p || p->uid == 0) // permissions do not apply to admin
+    return 1;
+  int bits = (p->uid == ip->uid) ? ((ip->mode >> 3) & 07) : (ip->mode & 07);
+  return (bits & perm) == perm;
 }
 
 // Unlock the given inode.
