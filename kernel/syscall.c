@@ -137,10 +137,10 @@ static uint64 (*syscalls[])(void) = {
   // clang-format on
 };
 
-#define PRIV_USER  0
-#define PRIV_ADMIN 1
+#define PRIV_ADMIN 0
+#define PRIV_USER  1
 
-// Table mapping each syscall to required privilege (admin only or everyone)
+// Table mapping each syscall to required privilege (admin only by default)
 static int syscall_privileges[] = {
   // clang-format off
   [SYS_fork]    = PRIV_USER,
@@ -170,6 +170,9 @@ static int syscall_privileges[] = {
   // clang-format on
 };
 
+_Static_assert(NELEM(syscall_privileges) == NELEM(syscalls),
+               "syscall_privileges size mismatch");
+
 void
 syscall(void)
 {
@@ -179,12 +182,13 @@ syscall(void)
   num = p->trapframe->a7;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Check privilege level
-    if (num < NELEM(syscall_privileges) &&
-        syscall_privileges[num] == PRIV_ADMIN && p->uid != 0) {
-      printk("%d %s: syscall %d denied for uid %d\n", p->pid, p->name, num,
-             p->uid);
-      p->trapframe->a0 = -1;
-      return;
+    if (p->uid != 0) {
+      int priv = (num < NELEM(syscall_privileges)) ? syscall_privileges[num]
+                                                   : PRIV_ADMIN;
+      if (priv != PRIV_USER) {
+        p->trapframe->a0 = -1;
+        return;
+      }
     }
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0

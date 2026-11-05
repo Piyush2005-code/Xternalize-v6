@@ -604,6 +604,7 @@ int
 kkill(int pid)
 {
   struct proc *p;
+  struct proc *cur = myproc();
 
   if (pid == 0)
     return -1;
@@ -611,6 +612,12 @@ kkill(int pid)
   for (p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if (p->pid == pid) {
+      if (cur && cur->uid != 0) {
+        if (pid == 1 || p->uid != cur->uid) {
+          release(&p->lock);
+          return -1;
+        }
+      }
       p->killed = 1;
       if (p->state == SLEEPING) {
         // Wake process from sleep().

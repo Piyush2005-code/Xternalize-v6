@@ -85,7 +85,7 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  assert(sizeof(struct dinode) <= BSIZE);
+  static_assert(sizeof(struct dinode) == 68, "dinode size must be 68 bytes");
   assert((BSIZE % sizeof(struct dirent)) == 0);
 
   fsfd = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0666);
@@ -159,7 +159,7 @@ main(int argc, char *argv[])
     inum = ialloc(T_FILE);
     if (is_bin) {
       rinode(inum, &din);
-      din.mode = xshort(075);
+      din.mode = xshort(MODE_EXEC);
       winode(inum, &din);
     }
 
@@ -179,7 +179,7 @@ main(int argc, char *argv[])
   off = xint(din.size);
   off = ((off / BSIZE) + 1) * BSIZE;
   din.size = xint(off);
-  din.mode = xshort(077);
+  din.mode = xshort(MODE_ROOT);
   winode(rootino, &din);
 
   balloc(freeblock);
@@ -243,7 +243,8 @@ ialloc(ushort type)
   din.nlink = xshort(1);
   din.size = xint(0);
   din.uid = xshort(0); // build-time files owned by admin
-  din.mode = xshort(type == T_DIR ? 075 : 064);
+  din.mode = xshort(
+    type == T_DIR ? MODE_DIR : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE));
   winode(inum, &din);
   return inum;
 }
