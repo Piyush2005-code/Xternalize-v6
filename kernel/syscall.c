@@ -170,9 +170,8 @@ static int syscall_privileges[] = {
   // clang-format on
 };
 
-_Static_assert(
-    NELEM(syscall_privileges) == NELEM(syscalls),
-    "syscall_privileges size mismatch");
+_Static_assert(NELEM(syscall_privileges) == NELEM(syscalls),
+               "syscall_privileges size mismatch");
 
 void
 syscall(void)
@@ -184,9 +183,8 @@ syscall(void)
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Check privilege level
     if (p->uid != 0) {
-      int priv = (num < NELEM(syscall_privileges)) ?
-                     syscall_privileges[num] :
-                     PRIV_ADMIN;
+      int priv = (num < NELEM(syscall_privileges)) ? syscall_privileges[num]
+                                                   : PRIV_ADMIN;
       if (priv != PRIV_USER) {
         p->trapframe->a0 = -1;
         return;
