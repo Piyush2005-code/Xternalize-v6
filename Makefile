@@ -154,6 +154,7 @@ UPROGS=\
 	$U/_whoami\
 	$U/_exit\
 	$U/_pathtest\
+	$U/_permtest\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
