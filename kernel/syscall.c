@@ -179,8 +179,10 @@ syscall(void)
   num = p->trapframe->a7;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Check privilege level
-    if (num < NELEM(syscall_privileges) && syscall_privileges[num] == PRIV_ADMIN && p->uid != 0) {
-      printk("%d %s: syscall %d denied for uid %d\n", p->pid, p->name, num, p->uid);
+    if (num < NELEM(syscall_privileges) &&
+        syscall_privileges[num] == PRIV_ADMIN && p->uid != 0) {
+      printk("%d %s: syscall %d denied for uid %d\n", p->pid, p->name, num,
+             p->uid);
       p->trapframe->a0 = -1;
       return;
     }

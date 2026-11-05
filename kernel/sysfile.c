@@ -386,7 +386,8 @@ sys_open(void)
     end_op();
     return -1;
   }
-  if (((omode & O_WRONLY) || (omode & O_RDWR) || (omode & O_TRUNC)) && !check_perm(ip, PERM_W)) {
+  if (((omode & O_WRONLY) || (omode & O_RDWR) || (omode & O_TRUNC)) &&
+      !check_perm(ip, PERM_W)) {
     iunlockput(ip);
     end_op();
     return -1;
