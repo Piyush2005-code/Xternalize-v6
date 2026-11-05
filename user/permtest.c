@@ -241,20 +241,21 @@ user_cases(int do_kill1)
   check("user: open /README O_WRONLY denied", tryopen("/README", O_WRONLY) < 0);
   check("user: open /README O_RDWR denied", tryopen("/README", O_RDWR) < 0);
   check("user: open /ls O_WRONLY denied", tryopen("/ls", O_WRONLY) < 0);
-  check("user: unlink /ls denied", unlink("/ls") < 0);
-  check("user: unlink /README denied", unlink("/README") < 0);
   check("user: mkdir in admin dir denied", mkdir(ADMDIR "/d") < 0);
   check("user: create in admin dir denied",
         tryopen(ADMDIR "/f", O_CREATE | O_WRONLY) < 0);
-  check("user: unlink in admin dir denied", unlink(ADMDIR "/s") < 0);
   check("user: write admin file in admin dir denied",
         tryopen(ADMDIR "/s", O_WRONLY) < 0);
   check("user: link into admin dir denied", link("/README", ADMDIR "/ln") < 0);
+  check("user: unlink in admin dir denied", unlink(ADMDIR "/s") < 0);
   dpid = daemon_pid();
   check("user: kill admin-owned process denied", dpid > 0 && kill(dpid) < 0);
   // admin-only syscalls: the privilege table must block them
   check("user: mknod denied (admin-only syscall)", mknod("/ptdev", 1, 1) < 0);
   check("user: sync denied (admin-only syscall)", sync() < 0);
+  // last, because they destroy system files on a kernel that allows them
+  check("user: unlink /ls denied", unlink("/ls") < 0);
+  check("user: unlink /README denied", unlink("/README") < 0);
 
   // ---- must be allowed
   ok = runout(ls, buf, sizeof(buf)) == 0 && contains(buf, "README");
