@@ -211,7 +211,8 @@ ialloc(uint dev, short type)
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
       dip->uid = myproc() ? myproc()->uid : 0;
-      dip->mode = (type == T_DIR) ? 075 : ((type == T_DEVICE) ? 066 : 064);
+      dip->mode = (type == T_DIR) ? MODE_DIR
+                                  : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE);
       log_write(bp); // mark it allocated on the disk
       brelse(bp);
       return iget(dev, inum);
@@ -324,7 +325,8 @@ ilock(struct inode *ip)
   }
 }
 
-// Permissions do not apply to admin; mode is 6 bits: [Owner 3-bit] [Other 3-bit]
+// Permissions do not apply to admin.
+// Mode is 6 bits: [Owner 3-bit: rwx] [Other 3-bit: rwx]
 int
 check_perm(struct inode *ip, int perm)
 {

@@ -28,6 +28,13 @@ struct superblock {
 #define MAXFILE   (NDIRECT + NINDIRECT)
 #define NLINK_MAX 32767 // nlink is a short; refuse links past its maximum
 
+// Permission mode constants (6-bit: [Owner 3-bit: rwx] [Other 3-bit: rwx])
+#define MODE_DIR  075 // Directories (rwxr-x)
+#define MODE_EXEC 075 // Executables (rwxr-x)
+#define MODE_FILE 064 // Regular files (rw-r--)
+#define MODE_DEV  066 // Device files like console (rw-rw-)
+#define MODE_ROOT 077 // Root directory (rwxrwxrwx)
+
 // On-disk inode structure
 struct dinode {
   short type;              // File type
@@ -37,7 +44,7 @@ struct dinode {
   uint size;               // Size of file (bytes)
   uint addrs[NDIRECT + 1]; // Data block addresses
   short uid;               // Owner user ID (0: admin, 1: user)
-  short mode;              // Permission mode bits (rwx)
+  short mode;              // Permission mode bits (6 bits: Owner + Other)
 };
 
 // Inodes per block.

@@ -91,9 +91,6 @@ sys_write(void)
   if (argfd(0, 0, &f) < 0)
     return -1;
 
-  if (f->type == FD_INODE && !check_perm(f->ip, PERM_W))
-    return -1;
-
   return filewrite(f, p, n);
 }
 
@@ -158,6 +155,10 @@ sys_link(void)
   if ((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
+  if (!check_perm(dp, PERM_W)) {
+    iunlockput(dp);
+    goto bad;
+  }
   // dp may have been unlinked while we resolved it; linking into an
   // orphaned directory leaks ip (itrunc discards the record without
   // dropping ip->nlink).  create() has the same guard.
@@ -289,13 +290,8 @@ create(char *path, short type, short major, short minor)
   if ((ip = dirlookup(dp, name, 0)) != 0) {
     iunlockput(dp);
     ilock(ip);
-    if (type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE)) {
-      if (!check_perm(ip, PERM_W)) {
-        iunlockput(ip);
-        return 0;
-      }
+    if (type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
-    }
     iunlockput(ip);
     return 0;
   }
@@ -309,8 +305,6 @@ create(char *path, short type, short major, short minor)
   ip->major = major;
   ip->minor = minor;
   ip->nlink = 1;
-  ip->uid = myproc() ? myproc()->uid : 0;
-  ip->mode = (type == T_DIR) ? 075 : ((type == T_DEVICE) ? 066 : 064);
   iupdate(ip);
 
   if (type == T_DIR) { // Create . and .. entries.

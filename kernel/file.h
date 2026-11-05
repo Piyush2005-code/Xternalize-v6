@@ -28,7 +28,7 @@ struct inode {
   uint size;
   uint addrs[NDIRECT + 1];
   short uid;  // Owner user ID (0: admin, 1: user)
-  short mode; // Permission mode bits (rwx)
+  short mode; // Permission mode bits (6 bits: Owner + Other)
 };
 
 // map major device number to device functions.
