@@ -122,7 +122,7 @@ sys_setuid(void)
 {
   int uid;
   argint(0, &uid);
-  if (uid < 0)
+  if (uid < 0 || uid > 1)
     return -1;
   struct proc *p = myproc();
   // Only admin (uid == 0) can change uid
