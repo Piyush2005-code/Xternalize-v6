@@ -131,3 +131,32 @@ sys_setuid(void)
   p->uid = uid;
   return 0;
 }
+
+// Externalization barrier: see kernel/spec.c.
+
+uint64
+sys_xbegin(void)
+{
+  return spec_begin();
+}
+
+uint64
+sys_xjoin(void)
+{
+  int id;
+
+  argint(0, &id);
+  return spec_join(id);
+}
+
+uint64
+sys_xcommit(void)
+{
+  return spec_end(1);
+}
+
+uint64
+sys_xabort(void)
+{
+  return spec_end(0);
+}

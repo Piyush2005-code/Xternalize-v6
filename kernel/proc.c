@@ -125,6 +125,7 @@ found:
   p->pid = allocpid();
   p->state = USED;
   p->uid = 0;
+  p->spec = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -168,6 +169,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->spec = 0;
   p->state = UNUSED;
 }
 
@@ -283,6 +285,7 @@ kfork(void)
   np->trapframe->a0 = 0;
 
   np->uid = p->uid;
+  np->spec = p->spec; // children run in the parent's speculation
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
@@ -365,6 +368,21 @@ kexit(int status)
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
+}
+
+// Take every process out of speculation id.  Called by xcommit and
+// xabort, so a commit or abort ends the speculation for all its members.
+void
+proc_leave_spec(int id)
+{
+  struct proc *p;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->spec == id)
+      p->spec = 0;
+    release(&p->lock);
+  }
 }
 
 // Wait for a child process to exit and return its pid.
