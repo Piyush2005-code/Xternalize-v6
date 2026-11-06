@@ -27,6 +27,7 @@ main()
     binit();            // buffer cache
     iinit();            // inode table
     fileinit();         // file table
+    spec_init();        // speculation table
     virtio_disk_init(); // emulated hard disk
     userinit();         // first user process
 

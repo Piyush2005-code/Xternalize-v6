@@ -23,3 +23,9 @@
 #define SYS_sync   22
 #define SYS_getuid 23
 #define SYS_setuid 24
+
+// Externalization barrier
+#define SYS_xbegin  25
+#define SYS_xjoin   26
+#define SYS_xcommit 27
+#define SYS_xabort  28

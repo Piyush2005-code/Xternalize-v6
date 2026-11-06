@@ -17,6 +17,8 @@ struct pipe {
   uint nwrite;   // number of bytes written
   int readopen;  // read fd is still open
   int writeopen; // write fd is still open
+  int spec;      // speculation the pipe was created in, 0 if none
+  int held;      // held writes waiting for xcommit or xabort
 };
 
 int
@@ -34,6 +36,8 @@ pipealloc(struct file **f0, struct file **f1)
   pi->writeopen = 1;
   pi->nwrite = 0;
   pi->nread = 0;
+  pi->spec = myproc()->spec;
+  pi->held = 0;
   initlock(&pi->lock, "pipe");
   (*f0)->type = FD_PIPE;
   (*f0)->readable = 1;
@@ -66,18 +70,50 @@ pipeclose(struct pipe *pi, int writable)
     pi->readopen = 0;
     wakeup(&pi->nwrite);
   }
-  if (pi->readopen == 0 && pi->writeopen == 0) {
+  if (pi->readopen == 0 && pi->writeopen == 0 && pi->held == 0) {
     release(&pi->lock);
     kfree((char *)pi);
   } else
     release(&pi->lock);
 }
 
+// A speculation is holding a write for this pipe.  Held data counts as
+// a writer that is still open, so the reader waits for it instead of
+// seeing end-of-file, and the pipe is not freed before it is delivered.
+void
+pipe_hold(struct pipe *pi)
+{
+  acquire(&pi->lock);
+  pi->held++;
+  release(&pi->lock);
+}
+
+// The held write was delivered (xcommit) or dropped (xabort).
+void
+pipe_unhold(struct pipe *pi)
+{
+  acquire(&pi->lock);
+  pi->held--;
+  wakeup(&pi->nread);
+  if (pi->readopen == 0 && pi->writeopen == 0 && pi->held == 0) {
+    release(&pi->lock);
+    kfree((char *)pi);
+  } else
+    release(&pi->lock);
+}
+
+// Write n bytes from addr (a user address if user_src is set).
 int
-pipewrite(struct pipe *pi, uint64 addr, int n)
+pipewrite(struct pipe *pi, int user_src, uint64 addr, int n)
 {
   int i = 0;
   struct proc *pr = myproc();
+
+  // A speculative writer whose reader is outside its speculation: hold
+  // the bytes until commit.  A pipe created inside the same speculation
+  // is not held, or every pipeline inside it would hang.
+  if (pr->spec != 0 && pr->spec != pi->spec)
+    return spec_hold(pi, user_src, addr, n);
 
   acquire(&pi->lock);
   while (i < n) {
@@ -93,7 +129,7 @@ pipewrite(struct pipe *pi, uint64 addr, int n)
       acquire(&pi->lock);
     } else {
       char ch;
-      if (copyin(pr->pagetable, pr->sz, &ch, addr + i, 1) == -1) {
+      if (either_copyin(&ch, user_src, addr + i, 1) == -1) {
         if (i == 0)
           i = -1;
         break;
@@ -116,7 +152,8 @@ piperead(struct pipe *pi, uint64 addr, int n)
   char ch;
 
   acquire(&pi->lock);
-  while (pi->nread == pi->nwrite && pi->writeopen) { //DOC: pipe-empty
+  while (pi->nread == pi->nwrite &&
+         (pi->writeopen || pi->held)) { //DOC: pipe-empty
     if (killed(pr)) {
       release(&pi->lock);
       return -1;
