@@ -260,6 +260,105 @@ test_slot_limit(void)
   check("xbegin fails when all NSPEC slots are open, ending frees one", ok);
 }
 
+// A pipe created before xbegin, with both ends then used inside the
+// speculation, must not deadlock: the inside reader pulls the held data
+// (regression test for the reader-inside hang).
+static void
+test_reader_inside(void)
+{
+  int st, p[2];
+  char buf[8];
+
+  pipe(p);
+  if (fork() == 0) {
+    xbegin(); // the pipe and both its ends are now inside
+    if (fork() == 0) {
+      close(p[0]);
+      write(p[1], "ping", 4);
+      close(p[1]);
+      exit(0);
+    }
+    int n = read(p[0], buf, sizeof(buf));
+    wait(0);
+    xabort();
+    exit(!(n == 4 && memcmp(buf, "ping", 4) == 0));
+  }
+  wait(&st);
+  close(p[0]);
+  close(p[1]);
+  check("a reader inside the speculation is not deadlocked", st == 0);
+}
+
+// A speculation whose login session has gone away (its members called
+// setsid() and exited without committing) is reclaimed on demand by a
+// later xbegin, and its held output is dropped, not released.
+static void
+test_orphan_session(void)
+{
+  int p[2];
+  char buf[8];
+
+  pipe(p);
+  for (int i = 0; i < NSPEC; i++) {
+    if (fork() == 0) {
+      setsid();          // a login session of this child's own
+      int id = xbegin(); // owned by a session that is about to vanish
+      if (i == 0 && id > 0)
+        write(p[1], "x", 1); // held write to an outside reader
+      exit(id > 0 ? 0 : 1);
+    }
+    wait(0);
+  }
+  close(p[1]);
+
+  // All NSPEC slots are now held by dead sessions.  An xbegin from our
+  // own (live) session must reclaim one and succeed.
+  int id = open_spec();
+  check("a dead session's speculation is reclaimed on demand", id > 0);
+  if (id > 0)
+    end_spec(id, 0);
+
+  // The reclaimed orphan's held pipe write was dropped: end-of-file.
+  int n = read(p[0], buf, sizeof(buf));
+  close(p[0]);
+  check("a reclaimed speculation's held output is dropped", n == 0);
+}
+
+// More held bytes than the pipe buffer, delivered at commit to a reader
+// that is a different process from the committer (so neither blocks the
+// other).
+static void
+test_large_pipe_commit(void)
+{
+  int p[2], id, rst;
+
+  pipe(p);
+  if (fork() == 0) { // writer: holds 700 bytes, leaves the speculation open
+    close(p[0]);
+    int myid = xbegin();
+    for (int i = 0; i < 700; i++)
+      write(p[1], "z", 1);
+    exit(myid);
+  }
+  wait(&id);
+  close(p[1]); // now only held data can reach the reader
+
+  int rpid = fork();
+  if (rpid == 0) { // reader: drains the pipe
+    int tot = 0, k;
+    char buf[64];
+    while ((k = read(p[0], buf, sizeof(buf))) > 0)
+      tot += k;
+    exit(tot == 700 ? 0 : 1);
+  }
+  close(p[0]);
+  end_spec(id,
+           1); // a third process joins and commits, delivering to the reader
+  wait(&rst);
+  check("held pipe data larger than the pipe buffer is delivered at commit",
+        id > 0 && rst == 0);
+}
+
 int
 main(void)
 {
@@ -272,6 +371,9 @@ main(void)
   test_record_limit();
   test_join_permission();
   test_slot_limit();
+  test_reader_inside();
+  test_orphan_session();
+  test_large_pipe_commit();
 
   if (failures == 0)
     printf("spectest: all tests passed\n");
