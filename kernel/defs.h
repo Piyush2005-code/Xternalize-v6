@@ -77,6 +77,7 @@ void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, uint64, int);
 int             pipewrite(struct pipe*, int, uint64, int);
 void            pipe_hold(struct pipe*);
+void           *pipe_readchan(struct pipe*);
 void            pipe_unhold(struct pipe*);
 
 // printk.c
@@ -128,6 +129,7 @@ int             spec_begin(void);
 int             spec_join(int);
 int             spec_end(int);
 int             spec_hold(struct pipe*, int, uint64, int);
+int             spec_pull(struct pipe*, uint64, int);
 
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);
