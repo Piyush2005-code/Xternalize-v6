@@ -102,5 +102,5 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int uid;                     // User ID: 0 for admin, 1 for normal user
-  int spec;                    // Speculative transaction id (0 = not speculative)
+  int spec; // Speculative transaction id (0 = not speculative)
 };
