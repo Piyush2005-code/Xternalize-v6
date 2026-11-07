@@ -36,6 +36,7 @@ struct held {
   struct pipe *pipe; // where the bytes were going; 0 means the console
   int off;           // where the bytes start in buf
   int n;             // how many bytes
+  int done;          // bytes already pulled by an inside reader
 };
 
 struct spec {
@@ -128,16 +129,21 @@ spec_join(int id)
 }
 
 // Make one held record visible.  The caller is no longer speculative,
-// so the write goes straight through instead of being held again.
+// so the write goes straight through instead of being held again.  Only
+// the part an inside reader has not already pulled (h->done..h->n) is
+// released, so nothing is delivered twice.
 static void
 release_held(struct spec *s, struct held *h)
 {
-  uint64 src = (uint64)(s->buf + h->off);
+  uint64 src = (uint64)(s->buf + h->off + h->done);
+  int n = h->n - h->done;
 
+  if (n <= 0)
+    return;
   if (h->pipe)
-    pipewrite(h->pipe, 0, src, h->n);
+    pipewrite(h->pipe, 0, src, n);
   else
-    devsw[CONSOLE].write(0, src, h->n);
+    devsw[CONSOLE].write(0, src, n);
 }
 
 // xcommit() (commit = 1) and xabort() (commit = 0) for the calling
@@ -199,6 +205,7 @@ spec_hold(struct pipe *pi, int user_src, uint64 src, int n)
     h->pipe = pi;
     h->off = s->used;
     h->n = 0;
+    h->done = 0;
     if (pi)
       pipe_hold(pi);
   }
@@ -207,9 +214,66 @@ spec_hold(struct pipe *pi, int user_src, uint64 src, int n)
   h->n += n;
   s->used += n;
   release(&spec_lock);
+
+  // Wake a reader that is inside this speculation so it can pull the
+  // bytes (see spec_pull); a reader outside it just goes back to sleep.
+  if (pi)
+    wakeup(pipe_readchan(pi));
   return n;
 
 fail:
   release(&spec_lock);
   return -1;
+}
+
+// An inside reader of pipe pi pulls the bytes its own speculation is
+// holding for pi, in order, straight from the held buffer.  This is how
+// a pipe whose reader turns out to be inside the speculation is not
+// deadlocked: the write is held, and the inside reader retrieves it
+// here instead of waiting for a commit that would never come.  A reader
+// outside the speculation (p->spec does not match) pulls nothing and so
+// waits for the commit, which is correct.  Returns bytes delivered (0 if
+// none to pull), or -1 on a copyout error.
+int
+spec_pull(struct pipe *pi, uint64 addr, int n)
+{
+  struct proc *p = myproc();
+  struct spec *s;
+  struct held *h = 0;
+  struct pipe *finished = 0;
+  int i;
+
+  acquire(&spec_lock);
+  s = lookup(p->spec);
+  if (s == 0 || s->ending) {
+    release(&spec_lock);
+    return 0;
+  }
+  for (int k = 0; k < s->nheld; k++)
+    if (s->held[k].pipe == pi && s->held[k].done < s->held[k].n) {
+      h = &s->held[k];
+      break;
+    }
+  if (h == 0) {
+    release(&spec_lock);
+    return 0;
+  }
+  for (i = 0; i < n && h->done < h->n; i++) {
+    char ch = s->buf[h->off + h->done];
+    if (copyout(p->pagetable, p->sz, addr + i, &ch, 1) == -1) {
+      if (i == 0)
+        i = -1;
+      break;
+    }
+    h->done++;
+  }
+  if (h->done == h->n && h->pipe) {
+    finished = h->pipe;
+    h->pipe = 0; // fully pulled: spec_end must not release it again
+  }
+  release(&spec_lock);
+
+  if (finished)
+    pipe_unhold(finished);
+  return i;
 }
