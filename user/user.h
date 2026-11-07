@@ -31,6 +31,7 @@ int xbegin(void);
 int xjoin(int);
 int xcommit(void);
 int xabort(void);
+int setsid(void);
 
 // ulib.c
 int stat(const char *, struct stat *);

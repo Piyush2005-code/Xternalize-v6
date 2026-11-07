@@ -29,3 +29,4 @@
 #define SYS_xjoin   26
 #define SYS_xcommit 27
 #define SYS_xabort  28
+#define SYS_setsid  29

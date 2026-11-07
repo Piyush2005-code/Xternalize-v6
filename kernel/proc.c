@@ -126,6 +126,7 @@ found:
   p->state = USED;
   p->uid = 0;
   p->spec = 0;
+  p->sid = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -170,6 +171,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->spec = 0;
+  p->sid = 0;
   p->state = UNUSED;
 }
 
@@ -286,6 +288,7 @@ kfork(void)
 
   np->uid = p->uid;
   np->spec = p->spec; // children run in the parent's speculation
+  np->sid = p->sid;   // and in the same login session
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
@@ -336,6 +339,12 @@ kexit(int status)
   if (p == initproc)
     panic("init exiting");
 
+  // When a login session's leader (its shell) exits, abort any
+  // speculation it left open, so an uncommitted speculation cannot hold
+  // a slot past logout.
+  if (p->sid != 0 && p->pid == p->sid)
+    spec_reclaim_session(p->sid);
+
   // Close all open files.
   for (int fd = 0; fd < NOFILE; fd++) {
     if (p->ofile[fd]) {
@@ -372,6 +381,25 @@ kexit(int status)
 
 // Take every process out of speculation id.  Called by xcommit and
 // xabort, so a commit or abort ends the speculation for all its members.
+// Is any process still part of login session sid?  Used to reclaim the
+// speculations of a session whose shell has exited or been killed.
+int
+session_alive(int sid)
+{
+  struct proc *p;
+  int alive = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED && p->sid == sid)
+      alive = 1;
+    release(&p->lock);
+    if (alive)
+      break;
+  }
+  return alive;
+}
+
 void
 proc_leave_spec(int id)
 {

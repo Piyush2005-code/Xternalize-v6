@@ -160,3 +160,17 @@ sys_xabort(void)
 {
   return spec_end(0);
 }
+
+// setsid(): make the caller a login-session leader, its session id its
+// own pid.  The shell calls this once at startup; children inherit the
+// id across fork, so a whole login session shares it.
+uint64
+sys_setsid(void)
+{
+  struct proc *p = myproc();
+
+  acquire(&p->lock);
+  p->sid = p->pid;
+  release(&p->lock);
+  return 0;
+}
