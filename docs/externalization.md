@@ -57,23 +57,50 @@ shell is not part of. A speculation stays open until someone commits or
 aborts it, even after all its processes have exited. All four calls are
 open to normal users.
 
+### Who owns a speculation
+
+Because `xbegin` leaves a speculation with no members (the process that
+called it exits so the shell stays outside), a speculation cannot be
+owned by its members — that would free it the instant `xbegin`
+returned. It is owned by the **login session** instead. A shell calls
+`setsid()` at startup and leads a session (its id is the shell's pid);
+its command children inherit the id, so one login shares it. Then:
+
+- `xjoin` requires the caller to be in the owning session, so one login
+  cannot touch another's speculation (and `xrun`/`xcommit`/`xabort`,
+  being children of the same shell, always can).
+- When the session's shell exits, `kexit` aborts any speculation it
+  left open, so logging out never leaks a slot.
+- A later `xbegin` first sweeps any speculation whose session is gone
+  (a crash or a `kill`), so dead sessions' slots are recovered without
+  a clean logout.
+
+A single live session that opens speculations and never ends them still
+runs out of slots (`xbegin` returns -1) until it ends some or logs out.
+That is intended back-pressure, like leaving transactions open, not a
+leak: the slots return at logout.
+
 ## What is held, and when
 
 | Write | Held? | Why |
 |---|---|---|
 | console, from a speculative process | yes | the person at the console is outside |
-| pipe created outside the writer's speculation | yes | its reader is outside |
-| pipe created inside the writer's speculation | no | the reader is inside; holding it would make every pipeline hang |
+| pipe write whose reader is outside the speculation | yes | the reader is outside |
+| pipe write whose reader is inside the speculation | no | the reader is inside |
 | kernel `printk` | no | not a process effect |
 | files | not yet | shadow blocks, next change |
 
-A pipe remembers the speculation it was created in (`pi->spec`). The
-rule is therefore "is my reader outside my speculation", not "am I
-speculative".
+The rule is "is my reader outside my speculation", not "am I
+speculative". A speculative write is held, but a reader that is *inside*
+the same speculation does not wait for a commit: when the pipe buffer is
+empty it pulls its own speculation's held bytes straight from the held
+buffer (`spec_pull`). So a pipe created before `xbegin` whose two ends
+are then used inside the speculation does not deadlock. A reader outside
+the speculation pulls nothing and waits for the commit.
 
-Held pipe data counts as a writer that is still open. If the writer
-exits before the commit, the reader keeps waiting instead of seeing
-end-of-file. It gets the bytes at `xcommit`, or end-of-file at
+A pipe whose write is held counts as having a writer still open. If the
+writer exits before the commit, the reader keeps waiting instead of
+seeing end-of-file. It gets the bytes at `xcommit`, or end-of-file at
 `xabort`, and the pipe is not freed while data is held for it.
 
 ## Where the held bytes live
@@ -102,11 +129,12 @@ must never do.
 
 | File | Change |
 |---|---|
-| `kernel/proc.h`, `kernel/proc.c` | `p->spec`, copied by `fork()`; `proc_leave_spec()` |
-| `kernel/spec.c` | speculation table, held output, begin/join/end |
+| `kernel/proc.h`, `kernel/proc.c` | `p->spec`, `p->sid`, copied by `fork()`; `proc_leave_spec()`, `session_alive()`, session reclaim in `kexit` |
+| `kernel/spec.c` | speculation table, held output, begin/join/end, pull, session reclaim |
 | `kernel/console.c` | `consolewrite()` holds speculative output |
-| `kernel/pipe.c` | `pi->spec`, `pi->held`, holding in `pipewrite()` |
-| `kernel/sysproc.c`, `syscall.c`, `syscall.h` | the four system calls |
+| `kernel/pipe.c` | `pi->spec`, `pi->held`, holding in `pipewrite()`, inside-reader pull in `piperead()` |
+| `kernel/sysproc.c`, `syscall.c`, `syscall.h` | the four calls plus `setsid()` |
+| `user/sh.c` | the shell leads its login session (`setsid`) |
 | `user/xbegin.c`, `xrun.c`, `xcommit.c`, `xabort.c` | commands |
 | `user/spectest.c` | in-guest tests |
 | `scripts/tests/test_spec_e2e.py` | end-to-end test through the qemu-bridge |
@@ -126,8 +154,13 @@ or, inside xv6, `spectest`. CI runs `make test-spec` on every push.
 - A write that finds the buffer full fails. It is not partly held.
 - If the speculation is ending (inside `xcommit` or `xabort`) when a
   member writes, that write fails.
-- `xcommit` may block while delivering to a pipe whose buffer is full,
-  until the reader reads.
+- `xcommit` delivers held pipe data by writing it into the pipe, which
+  blocks until a reader drains it. This is fine when the reader is a
+  different process (the usual case: `xcommit <id>` runs in its own
+  process while another reads). But if the committing process is also
+  the *only* reader of that pipe, and more bytes are held than the pipe
+  buffer (512 bytes), `xcommit` blocks forever — nobody drains it.
+  Commit from a separate process, which the `xcommit` command does.
 - A process that is still running when its speculation commits simply
   continues outside it. Later writes go through directly.
 - A process forked at the same moment its speculation ends can be left
