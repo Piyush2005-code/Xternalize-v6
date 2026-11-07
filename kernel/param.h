@@ -19,15 +19,15 @@
 #define MAXPATH     128               // maximum file path name
 #define USERSTACK   1                 // user stack pages
 
-#define MAXSHADOWBLOCKS 64            // max speculative shadow blocks in memory
+#define MAXSHADOWBLOCKS 64 // max speculative shadow blocks in memory
 
 // A speculative shadow copy of a disk block, kept entirely in memory
 // and protected by the shadow table's spinlock. Shadows are keyed by
 // (spec, dev, blockno), not by inode.
 struct shadow {
-  int spec;      // id of the speculative process that owns this shadow (0 = free)
-  uint dev;      // device of the block
-  uint blockno;  // block number on the device
+  int spec; // id of the speculative process that owns this shadow (0 = free)
+  uint dev; // device of the block
+  uint blockno;     // block number on the device
   char data[BSIZE]; // shadowed block contents
 };
 

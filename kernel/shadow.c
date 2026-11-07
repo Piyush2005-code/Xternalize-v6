@@ -37,8 +37,7 @@ shadow_find(int spec, uint dev, uint blockno)
 
   acquire(&stable.lock);
   for (int i = 0; i < MAXSHADOWBLOCKS; i++) {
-    if (stable.shadows[i].spec == spec &&
-        stable.shadows[i].dev == dev &&
+    if (stable.shadows[i].spec == spec && stable.shadows[i].dev == dev &&
         stable.shadows[i].blockno == blockno) {
       s = &stable.shadows[i];
       break;
