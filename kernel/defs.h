@@ -90,6 +90,7 @@ int             cpuid(void);
 void            kexit(int);
 int             kfork(void);
 void            proc_leave_spec(int);
+int             session_alive(int);
 int             growproc(int);
 void            proc_mapstacks(pagetable_t);
 pagetable_t     proc_pagetable(struct proc *);
@@ -130,6 +131,7 @@ int             spec_join(int);
 int             spec_end(int);
 int             spec_hold(struct pipe*, int, uint64, int);
 int             spec_pull(struct pipe*, uint64, int);
+void            spec_reclaim_session(int);
 
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);

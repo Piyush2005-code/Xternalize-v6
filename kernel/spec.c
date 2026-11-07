@@ -42,6 +42,7 @@ struct held {
 struct spec {
   int id;     // speculation id, 0 if this slot is free
   int uid;    // user who began it; only they (or admin) may join
+  int owner;  // login session that owns it; reclaimed when it exits
   int ending; // commit or abort in progress: hold nothing more
   int nheld;  // records in use
   struct held held[NHELD];
@@ -71,6 +72,49 @@ lookup(int id)
   return 0;
 }
 
+// Drop a slot's held output and free it, without releasing anything.
+// Caller has set s->ending under spec_lock and does not hold the lock.
+static void
+discard_slot(struct spec *s, int id)
+{
+  proc_leave_spec(id);
+  for (int i = 0; i < s->nheld; i++)
+    if (s->held[i].pipe)
+      pipe_unhold(s->held[i].pipe);
+  acquire(&spec_lock);
+  s->id = 0;
+  release(&spec_lock);
+}
+
+// Abort every open speculation whose owning session is no longer alive
+// (its shell exited or was killed without committing).  Lets a crashed
+// session's slots be recovered on demand, so a new xbegin can proceed.
+static void
+reclaim_dead(void)
+{
+  for (struct spec *s = specs; s < &specs[NSPEC]; s++) {
+    int id, owner;
+
+    acquire(&spec_lock);
+    id = s->id;
+    owner = s->owner;
+    if (id == 0 || s->ending)
+      id = 0;
+    release(&spec_lock);
+    if (id == 0 || owner == 0 || session_alive(owner))
+      continue;
+
+    acquire(&spec_lock);
+    if (s->id == id && !s->ending)
+      s->ending = 1;
+    else
+      id = 0;
+    release(&spec_lock);
+    if (id)
+      discard_slot(s, id);
+  }
+}
+
 // xbegin(): open a new speculation and put the calling process in it.
 // Returns the speculation id, or -1 if the caller is already speculative
 // (nesting is not supported) or all NSPEC slots are in use.
@@ -83,6 +127,8 @@ spec_begin(void)
   if (p->spec != 0)
     return -1;
 
+  reclaim_dead(); // free any slot whose session has gone away
+
   acquire(&spec_lock);
   for (s = specs; s < &specs[NSPEC]; s++)
     if (s->id == 0)
@@ -93,6 +139,7 @@ spec_begin(void)
   }
   s->id = nextid++;
   s->uid = p->uid;
+  s->owner = p->sid;
   s->ending = 0;
   s->nheld = 0;
   s->used = 0;
@@ -117,7 +164,10 @@ spec_join(int id)
 
   acquire(&spec_lock);
   s = lookup(id);
-  if (s == 0 || s->ending || (p->uid != 0 && p->uid != s->uid)) {
+  // Must belong to the caller's own login session, and the caller must
+  // be the user who began it (or admin).
+  if (s == 0 || s->ending || s->owner != p->sid ||
+      (p->uid != 0 && p->uid != s->uid)) {
     release(&spec_lock);
     return -1;
   }
@@ -126,6 +176,26 @@ spec_join(int id)
   release(&p->lock);
   release(&spec_lock);
   return 0;
+}
+
+// Abort every open speculation owned by login session sid.  Called from
+// kexit when the session's leader exits, so a speculation left open at
+// logout does not hold its slot.
+void
+spec_reclaim_session(int sid)
+{
+  for (struct spec *s = specs; s < &specs[NSPEC]; s++) {
+    int id = 0;
+
+    acquire(&spec_lock);
+    if (s->id != 0 && !s->ending && s->owner == sid) {
+      id = s->id;
+      s->ending = 1;
+    }
+    release(&spec_lock);
+    if (id)
+      discard_slot(s, id);
+  }
 }
 
 // Make one held record visible.  The caller is no longer speculative,

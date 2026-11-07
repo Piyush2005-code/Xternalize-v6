@@ -151,6 +151,8 @@ main(void)
   static char buf[100];
   int fd;
 
+  setsid(); // this shell leads its login session (see kernel/spec.c)
+
   // Ensure that three file descriptors are open.
   while ((fd = open("console", O_RDWR)) >= 0) {
     if (fd >= 3) {
