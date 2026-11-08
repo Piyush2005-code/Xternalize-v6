@@ -12,3 +12,8 @@
 #define FSSIZE      2000              // size of file system in blocks
 #define MAXPATH     128               // maximum file path name
 #define USERSTACK   1                 // user stack pages
+
+// Externalization barrier (kernel/spec.c)
+#define NSPEC     4    // speculations that can be open at once
+#define NHELD     64   // held writes (records) per speculation
+#define HELDBYTES 4096 // bytes of output one speculation can hold back

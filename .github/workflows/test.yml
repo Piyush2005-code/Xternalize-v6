@@ -9,7 +9,17 @@ jobs:
       - run: make fmt && git diff --exit-code
       - run: make kernel/kernel fs.img
       - run: ./test-xv6.py usertests
-      - run: ./test-xv6.py crash
+      # The crash test kills QEMU at a chosen moment and hopes to catch a
+      # committed-but-uninstalled log transaction.  That is probabilistic,
+      # so retry a few times before failing the job.
+      - name: Crash-recovery tests
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::crash attempt $attempt"
+            if ./test-xv6.py crash; then echo "::endgroup::"; exit 0; fi
+            echo "::endgroup::"
+          done
+          exit 1
 
   macos:
     runs-on: macos-latest

@@ -24,6 +24,7 @@ OBJS = \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
+  $K/spec.o \
   $K/exec.o \
   $K/sysfile.o \
   $K/kernelvec.o \
@@ -155,6 +156,11 @@ UPROGS=\
 	$U/_exit\
 	$U/_pathtest\
 	$U/_permtest\
+	$U/_xbegin\
+	$U/_xrun\
+	$U/_xcommit\
+	$U/_xabort\
+	$U/_spectest\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
@@ -234,6 +240,12 @@ test-path:
 .PHONY: test-perm
 test-perm:
 	python3 scripts/tests/test_perm_e2e.py
+
+# Host-side end-to-end test of the externalization barrier, driven
+# through the qemu-bridge like the agent (CPUS=1 and CPUS=3).
+.PHONY: test-spec
+test-spec:
+	python3 scripts/tests/test_spec_e2e.py
 
 .PHONY: fmt
 fmt:

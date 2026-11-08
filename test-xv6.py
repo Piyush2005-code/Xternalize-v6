@@ -8,7 +8,7 @@
 # ./test-xv6.py crash  (runs the crash tests)
 # ./test-xv6.py log (runs the log crash test)
 
-import argparse, os, inspect, re, signal, subprocess, sys, time
+import argparse, os, inspect, random, re, signal, subprocess, sys, time
 from subprocess import run
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -146,10 +146,10 @@ class QEMU(object):
             if self.match(*regexps, exit=False):
                 return
 
-def crash_log():
+def crash_log(delay):
     q = QEMU(True)
     q.cmd("logstress f0 f1 f2 f3 f4 f5\n")
-    time.sleep(2)
+    time.sleep(delay)
     q.crash()
     q.stop()
 
@@ -159,8 +159,26 @@ def recover_log():
     q.read()
     ok = q.match('^recovering', exit=False)
     if ok:
+        # Recovery ran.  Confirm it produced a consistent, usable file
+        # system: `ls` must complete (the prompt returns) with no panic.
+        # We do NOT require a specific logstress file to be present: a
+        # crash early in logstress can commit the log before that file is
+        # created, and that is still a correct recovery.
+        base = len(q.output)
         q.cmd("ls\n")
-        q.monitor('f5', timeout=30)
+        deadline = time.time() + 30
+        done = False
+        while time.time() < deadline:
+            q.read()
+            new = q.output[base:]
+            if 'panic' in new:
+                q.error('panic after log recovery')
+            if 'admin# ' in new or 'user$ ' in new:
+                done = True
+                break
+            time.sleep(0.2)
+        if not done:
+            q.error('shell did not return after ls following recovery')
     q.stop()
     return ok
 
@@ -186,7 +204,16 @@ def recover_orphan():
 def test_log():
     print("Test recovery of log")
     for i in range(20):
-        crash_log()
+        # Crash at a different moment each attempt, so the 20 tries sample
+        # many points of logstress instead of the same instant every time.
+        # With a fixed delay, whether the crash lands while the log holds a
+        # committed-but-uninstalled transaction depends on machine speed:
+        # on a fast host logstress finishes before the delay and every
+        # attempt sees an already-clean log.  The delays are small and
+        # closely spaced (~0.1 .. 1.5s) because the window is brief: the
+        # disk has little free space, so logstress commits for well under
+        # a second.
+        crash_log(0.1 + 0.07 * i + random.uniform(0, 0.05))
         ok = recover_log()
         if ok:
             print("OK")

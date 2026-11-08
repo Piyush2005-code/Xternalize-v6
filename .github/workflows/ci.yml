@@ -51,12 +51,20 @@ jobs:
       - name: Path resolution end-to-end (CPUS=1, CPUS=3)
         run: python3 scripts/tests/test_path_e2e.py
 
+      # Drives xv6 through agent/qemu_bridge.py the way the agent does:
+      # xrun output is held, xcommit releases it, xabort drops it, and the
+      # in-guest spectest passes, on CPUS=1 and CPUS=3.
+      - name: Externalization barrier end-to-end (CPUS=1, CPUS=3)
+        run: python3 scripts/tests/test_spec_e2e.py
+
       - name: Upload raw QEMU logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: path-e2e-logs
-          path: scripts/logs/path_e2e_*.log
+          path: |
+            scripts/logs/path_e2e_*.log
+            scripts/logs/spec_e2e_*.log
           if-no-files-found: warn
 
   tooling:
