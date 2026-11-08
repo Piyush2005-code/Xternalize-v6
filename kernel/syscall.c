@@ -105,6 +105,11 @@ extern uint64 sys_close(void);
 extern uint64 sys_sync(void);
 extern uint64 sys_getuid(void);
 extern uint64 sys_setuid(void);
+extern uint64 sys_xbegin(void);
+extern uint64 sys_xjoin(void);
+extern uint64 sys_xcommit(void);
+extern uint64 sys_xabort(void);
+extern uint64 sys_setsid(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -134,6 +139,11 @@ static uint64 (*syscalls[])(void) = {
   [SYS_sync]    = sys_sync,
   [SYS_getuid]  = sys_getuid,
   [SYS_setuid]  = sys_setuid,
+  [SYS_xbegin]  = sys_xbegin,
+  [SYS_xjoin]   = sys_xjoin,
+  [SYS_xcommit] = sys_xcommit,
+  [SYS_xabort]  = sys_xabort,
+  [SYS_setsid]  = sys_setsid,
   // clang-format on
 };
 
@@ -167,6 +177,11 @@ static int syscall_privileges[] = {
   [SYS_sync]    = PRIV_ADMIN,
   [SYS_getuid]  = PRIV_USER,
   [SYS_setuid]  = PRIV_ADMIN,
+  [SYS_xbegin]  = PRIV_USER,
+  [SYS_xjoin]   = PRIV_USER,
+  [SYS_xcommit] = PRIV_USER,
+  [SYS_xabort]  = PRIV_USER,
+  [SYS_setsid]  = PRIV_USER,
   // clang-format on
 };
 

@@ -75,7 +75,10 @@ void            end_op(void);
 int             pipealloc(struct file**, struct file**);
 void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, uint64, int);
-int             pipewrite(struct pipe*, uint64, int);
+int             pipewrite(struct pipe*, int, uint64, int);
+void            pipe_hold(struct pipe*);
+void           *pipe_readchan(struct pipe*);
+void            pipe_unhold(struct pipe*);
 
 // printk.c
 int             printk(char*, ...) __attribute__ ((format (printf, 1, 2)));
@@ -86,6 +89,8 @@ void            printkinit(void);
 int             cpuid(void);
 void            kexit(int);
 int             kfork(void);
+void            proc_leave_spec(int);
+int             session_alive(int);
 int             growproc(int);
 void            proc_mapstacks(pagetable_t);
 pagetable_t     proc_pagetable(struct proc *);
@@ -118,6 +123,15 @@ void            initlock(struct spinlock*, char*);
 void            release(struct spinlock*);
 void            push_off(void);
 void            pop_off(void);
+
+// spec.c
+void            spec_init(void);
+int             spec_begin(void);
+int             spec_join(int);
+int             spec_end(int);
+int             spec_hold(struct pipe*, int, uint64, int);
+int             spec_pull(struct pipe*, uint64, int);
+void            spec_reclaim_session(int);
 
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);

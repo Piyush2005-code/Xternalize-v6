@@ -27,6 +27,11 @@ int uptime(void);
 int sync(void);
 int getuid(void);
 int setuid(int);
+int xbegin(void);
+int xjoin(int);
+int xcommit(void);
+int xabort(void);
+int setsid(void);
 
 // ulib.c
 int stat(const char *, struct stat *);

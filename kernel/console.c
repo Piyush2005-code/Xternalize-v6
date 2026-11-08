@@ -64,6 +64,12 @@ consolewrite(int user_src, uint64 src, int n)
 {
   char buf[32]; // move batches from user space to uart.
   int i = 0;
+  struct proc *p = myproc();
+
+  // A speculative process's output is held until its speculation
+  // commits (kernel/spec.c).  Kernel printk() does not come through here.
+  if (p != 0 && p->spec != 0)
+    return spec_hold(0, user_src, src, n);
 
   while (i < n) {
     int nn = sizeof(buf);

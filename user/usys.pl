@@ -45,3 +45,8 @@ entry("uptime");
 entry("sync");
 entry("getuid");
 entry("setuid");
+entry("xbegin");
+entry("xjoin");
+entry("xcommit");
+entry("xabort");
+entry("setsid");

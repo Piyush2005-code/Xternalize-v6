@@ -17,6 +17,8 @@ struct pipe {
   uint nwrite;   // number of bytes written
   int readopen;  // read fd is still open
   int writeopen; // write fd is still open
+  int spec;      // speculation the pipe was created in, 0 if none
+  int held;      // held writes waiting for xcommit or xabort
 };
 
 int
@@ -34,6 +36,8 @@ pipealloc(struct file **f0, struct file **f1)
   pi->writeopen = 1;
   pi->nwrite = 0;
   pi->nread = 0;
+  pi->spec = myproc()->spec;
+  pi->held = 0;
   initlock(&pi->lock, "pipe");
   (*f0)->type = FD_PIPE;
   (*f0)->readable = 1;
@@ -66,18 +70,58 @@ pipeclose(struct pipe *pi, int writable)
     pi->readopen = 0;
     wakeup(&pi->nwrite);
   }
-  if (pi->readopen == 0 && pi->writeopen == 0) {
+  if (pi->readopen == 0 && pi->writeopen == 0 && pi->held == 0) {
     release(&pi->lock);
     kfree((char *)pi);
   } else
     release(&pi->lock);
 }
 
+// The channel a reader sleeps on, so spec_hold() can wake an inside
+// reader once it has held bytes for the reader to pull.
+void *
+pipe_readchan(struct pipe *pi)
+{
+  return &pi->nread;
+}
+
+// A speculation is holding a write for this pipe.  Held data counts as
+// a writer that is still open, so the reader waits for it instead of
+// seeing end-of-file, and the pipe is not freed before it is delivered.
+void
+pipe_hold(struct pipe *pi)
+{
+  acquire(&pi->lock);
+  pi->held++;
+  release(&pi->lock);
+}
+
+// The held write was delivered (xcommit) or dropped (xabort).
+void
+pipe_unhold(struct pipe *pi)
+{
+  acquire(&pi->lock);
+  pi->held--;
+  wakeup(&pi->nread);
+  if (pi->readopen == 0 && pi->writeopen == 0 && pi->held == 0) {
+    release(&pi->lock);
+    kfree((char *)pi);
+  } else
+    release(&pi->lock);
+}
+
+// Write n bytes from addr (a user address if user_src is set).
 int
-pipewrite(struct pipe *pi, uint64 addr, int n)
+pipewrite(struct pipe *pi, int user_src, uint64 addr, int n)
 {
   int i = 0;
   struct proc *pr = myproc();
+
+  // A speculative writer whose reader is outside its speculation: hold
+  // the bytes until commit.  A pipe created inside the same speculation
+  // is not held, or every pipeline inside it would hang.
+  if (pr->spec != 0 && pr->spec != pi->spec)
+    return spec_hold(pi, user_src, addr, n);
 
   acquire(&pi->lock);
   while (i < n) {
@@ -93,7 +137,7 @@ pipewrite(struct pipe *pi, uint64 addr, int n)
       acquire(&pi->lock);
     } else {
       char ch;
-      if (copyin(pr->pagetable, pr->sz, &ch, addr + i, 1) == -1) {
+      if (either_copyin(&ch, user_src, addr + i, 1) == -1) {
         if (i == 0)
           i = -1;
         break;
@@ -111,20 +155,41 @@ pipewrite(struct pipe *pi, uint64 addr, int n)
 int
 piperead(struct pipe *pi, uint64 addr, int n)
 {
-  int i;
+  int i, held, writeopen;
   struct proc *pr = myproc();
   char ch;
 
-  acquire(&pi->lock);
-  while (pi->nread == pi->nwrite && pi->writeopen) { //DOC: pipe-empty
+  // Deliver data in order: first whatever is already in the pipe buffer
+  // (written before any speculation), then, if the pipe is empty, the
+  // bytes this reader's own speculation is holding for it (spec_pull).
+  // A reader outside the speculation pulls nothing and waits for the
+  // commit that will put the bytes in the pipe buffer.
+  for (;;) {
+    acquire(&pi->lock);
+    if (pi->nread != pi->nwrite) //DOC: pipe-empty
+      break;                     // data in the buffer: read it below
     if (killed(pr)) {
       release(&pi->lock);
       return -1;
     }
-    sleep_prepare(&pi->nread); //DOC: piperead-sleep
+    held = pi->held;
+    writeopen = pi->writeopen;
     release(&pi->lock);
-    sleep();
+
+    i = spec_pull(pi, addr, n);
+    if (i != 0)
+      return i; // pulled our own held bytes (or a copy error)
+    if (!writeopen && !held)
+      return 0; // no writer and nothing held: end of file
+
     acquire(&pi->lock);
+    if (pi->nread == pi->nwrite && (pi->writeopen || pi->held)) {
+      sleep_prepare(&pi->nread); //DOC: piperead-sleep
+      release(&pi->lock);
+      sleep();
+    } else {
+      release(&pi->lock);
+    }
   }
   for (i = 0; i < n; i++) { //DOC: piperead-copy
     if (pi->nread == pi->nwrite)
