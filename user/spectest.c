@@ -615,13 +615,50 @@ crash_modes(int argc, char **argv)
     printf("spectest: shadow table: %s\n", have_shadows ? "yes" : "no");
     return 0;
   }
-  if (argc == 4 && strcmp(argv[1], "write") == 0) { // inside a speculation
-    int fd = open(argv[2], O_WRONLY);
+  // fill FILE BYTE COUNT [create]: write COUNT copies of BYTE at the start of
+  // FILE.  Run inside a speculation (xrun) its console line is held too.
+  if ((argc == 5 || argc == 6) && strcmp(argv[1], "fill") == 0) {
+    char blk[1024];
+    int left = atoi(argv[4]);
+    int fd = open(argv[2], argc == 6 ? O_CREATE | O_WRONLY | O_TRUNC : O_WRONLY);
 
-    if (fd < 0 || write(fd, argv[3], strlen(argv[3])) < 0)
+    if (fd < 0)
       return 1;
+    memset(blk, argv[3][0], sizeof(blk));
+    while (left > 0) {
+      int k = left < (int)sizeof(blk) ? left : (int)sizeof(blk);
+
+      if (write(fd, blk, k) != k)
+        return 1;
+      left -= k;
+    }
     close(fd);
-    printf("spectest: wrote %s\n", argv[2]); // held until commit
+    printf("spectest: wrote %s\n", argv[2]);
+    return 0;
+  }
+  // state FILE OLD NEW: is FILE all OLD bytes, all NEW bytes or mixed?
+  if (argc == 5 && strcmp(argv[1], "state") == 0) {
+    char blk[1024];
+    int nold = 0, nnew = 0, other = 0, k;
+    int fd = open(argv[2], O_RDONLY);
+
+    if (fd < 0) {
+      printf("spectest: state of %s: missing\n", argv[2]);
+      return 0;
+    }
+    while ((k = read(fd, blk, sizeof(blk))) > 0)
+      for (int i = 0; i < k; i++) {
+        if (blk[i] == argv[3][0])
+          nold++;
+        else if (blk[i] == argv[4][0])
+          nnew++;
+        else
+          other++;
+      }
+    close(fd);
+    printf("spectest: state of %s: %s (%d old, %d new, %d other)\n", argv[2],
+           other ? "mixed" : nnew == 0 ? "old" : nold == 0 ? "new" : "mixed",
+           nold, nnew, other);
     return 0;
   }
   if (argc == 4 && strcmp(argv[1], "crashcommit") == 0) {
