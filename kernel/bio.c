@@ -165,9 +165,10 @@ pbread(int spec, uint dev, uint blockno)
         acquiresleep(&b->lock);
         release(&pcache.lock);
         // Fill while holding the sleeplock: later holders wait for it.
-        if (!shadow_read(spec, dev, blockno, (char *)b->data)) {
+        if (!shadow_read(spec, dev, blockno, (char *)b->data, &b->version)) {
           struct buf *r = bread_raw(dev, blockno);
           memmove(b->data, r->data, BSIZE);
+          b->version = blockver_version(dev, blockno);
           brelse(r);
         }
         b->valid = 1;
