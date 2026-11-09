@@ -100,7 +100,9 @@ spec_commit_files(int id)
 {
   int n = shadow_count(id);
 
-  if (n > SPECBLOCKS)
+  // The table was just read under its lock, so any refused write of a
+  // member (which marks the speculation failed under that lock) is visible.
+  if (n > SPECBLOCKS || spec_failed(id))
     return -1;
 
   crash_armed = 1;

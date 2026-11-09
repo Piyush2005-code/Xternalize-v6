@@ -52,14 +52,14 @@ void            ilock(struct inode*);
 void            iput(struct inode*);
 void            iunlock(struct inode*);
 void            iunlockput(struct inode*);
-void            iupdate(struct inode*);
+int             iupdate(struct inode*);
 int             namecmp(const char*, const char*);
 struct inode*   namei(char*);
 struct inode*   nameiparent(char*, char*);
 int             readi(struct inode*, int, uint64, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
-void            itrunc(struct inode*);
+int             itrunc(struct inode*);
 void            ireclaim(int);
 
 // kalloc.c
@@ -74,6 +74,7 @@ void            begin_op(void);
 void            end_op(void);
 void            begin_op_n(int);
 void            end_op_n(int);
+int             op_failed(void);
 
 // shadow.c
 void            shadow_init(void);
@@ -147,6 +148,8 @@ int             spec_hold(struct pipe*, int, uint64, int);
 int             spec_pull(struct pipe*, uint64, int);
 void            spec_reclaim_session(int);
 int             spec_can_shadow(int);
+void            spec_mark_failed(int);
+int             spec_failed(int);
 
 // speccommit.c
 int             spec_commit_files(int);

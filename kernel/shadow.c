@@ -158,7 +158,7 @@ shadow_read(int spec, uint dev, uint blockno, char *dst)
 
 // Store src as the speculation's version of (dev, blockno): update its
 // shadow, or take a free slot for it.  Returns 0, or -1 if the table is full
-// (nothing is stored then).  This is what log_write() does for a private
+// (nothing is stored then, and the speculation is marked failed).  This is what log_write() does for a private
 // buffer.
 int
 shadow_put(int spec, uint dev, uint blockno, char *src)
@@ -186,6 +186,11 @@ shadow_put(int spec, uint dev, uint blockno, char *src)
     free->blockno = blockno;
     memmove(free->data, src, BSIZE);
     ret = 0;
+  } else {
+    // Table full.  The caller returns -1 up to its system call, but the
+    // operation it belongs to may be half written in the shadows, so the
+    // speculation is marked FAILED: xcommit will refuse it (spec_end).
+    spec_mark_failed(spec);
   }
   release(&stable.lock);
   return ret;

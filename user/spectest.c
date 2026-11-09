@@ -533,14 +533,13 @@ static void
 test_shadow_exhaustion(void)
 {
   char blk[1024];
-  int id, ok, bad = 0;
-  struct stat st;
-  int fd;
+  int id, ok, n_ok, mk_failed;
 
   unlink("/sc_big");
   id = open_spec();
   if (fork() == 0) {
     int n = 0;
+    int fd;
 
     if (xjoin(id) < 0)
       exit(255);
@@ -551,27 +550,25 @@ test_shadow_exhaustion(void)
         break;
     }
     close(fd);
-    exit(n < 200 ? n : 199);
+    // The table is full: a mkdir (it needs a new data block) must fail too,
+    // not silently lose its blocks.
+    exit(n + 1000 * (mkdir("/sc_d") < 0) + 10000 * (n >= 200));
   }
   wait(&ok);
-  printf("spectest: %d 1KB writes succeeded before the limit\n", ok);
-  check("a write past the shadow limit returns -1", ok > 0 && ok < 199);
-  check("nothing reached the disk before commit", !exists("/sc_big"));
-  check("commit after the limit was hit succeeds", end_spec(id, 1) == 0);
-  fd = open("/sc_big", O_RDONLY);
-  if (fd < 0 || fstat(fd, &st) < 0 || st.size != (uint)ok * 1024) {
-    bad = 1;
-  } else {
-    for (int i = 0; i < ok && !bad; i++) {
-      if (read(fd, blk, sizeof(blk)) != sizeof(blk) || blk[0] != 'a' + i % 26 ||
-          blk[1023] != 'a' + i % 26)
-        bad = 1;
-    }
-  }
-  if (fd >= 0)
-    close(fd);
-  check("exactly the writes that succeeded are on disk", !bad);
-  unlink("/sc_big");
+  n_ok = ok % 1000;
+  mk_failed = (ok / 1000) % 10;
+  printf("spectest: %d 1KB writes succeeded before the limit\n", n_ok);
+  check("a write past the shadow limit returns -1", n_ok > 0 && ok < 10000);
+  check("mkdir with a full shadow table returns -1", mk_failed == 1);
+  check("nothing reached the disk before commit",
+        !exists("/sc_big") && !exists("/sc_d"));
+  // A refused write may have left an operation half done in the shadows, so
+  // the speculation is FAILED: xcommit returns -1 and aborts it.
+  check("xcommit of a speculation with a refused write returns -1",
+        end_spec(id, 1) != 0);
+  check("a failed speculation left nothing on the disk",
+        !exists("/sc_big") && !exists("/sc_d"));
+  check("a failed speculation is gone (xabort refuses)", end_spec(id, 0) != 0);
 }
 
 // A second xcommit or xabort, from another member or after the other
