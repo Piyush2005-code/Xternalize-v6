@@ -83,6 +83,8 @@ install_trans(int recovering)
       bunpin(dbuf);
     brelse(lbuf);
     brelse(dbuf);
+    if (recovering == 0)
+      crash_point(); // crashat(): during install_trans
   }
 }
 
@@ -231,7 +233,9 @@ commit()
 {
   if (log.lh.n > 0) {
     write_log();      // Write modified blocks from cache to log
+    crash_point();    // crashat(): just before the commit point
     write_head();     // Write header to disk -- the real commit
+    crash_point();    // crashat(): just after the commit point
     install_trans(0); // Now install writes to home locations
     log.lh.n = 0;
     write_head(); // Erase the transaction from the log

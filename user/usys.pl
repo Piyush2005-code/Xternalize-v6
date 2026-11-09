@@ -50,3 +50,4 @@ entry("xjoin");
 entry("xcommit");
 entry("xabort");
 entry("setsid");
+entry("crashat");

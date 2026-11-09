@@ -25,6 +25,7 @@ OBJS = \
   $K/file.o \
   $K/pipe.o \
   $K/spec.o \
+  $K/speccommit.o \
   $K/exec.o \
   $K/sysfile.o \
   $K/kernelvec.o \
