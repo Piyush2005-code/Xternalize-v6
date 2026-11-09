@@ -8,6 +8,8 @@
 
 #include "kernel/types.h"
 #include "kernel/param.h"
+#include "kernel/stat.h"
+#include "kernel/fcntl.h"
 #include "user/user.h"
 
 static int failures;
@@ -359,9 +361,291 @@ test_large_pipe_commit(void)
         id > 0 && rst == 0);
 }
 
-int
-main(void)
+// ---- file effects (need the shadow table) ----------------------------------
+
+static int have_shadows; // do file writes inside a speculation stay held?
+
+static void
+skip(char *name)
 {
+  printf("spectest: SKIP %s (needs shadow table)\n", name);
+}
+
+// Replace the contents of path with s.
+static void
+put(char *path, char *s)
+{
+  int fd = open(path, O_CREATE | O_WRONLY | O_TRUNC);
+
+  if (fd >= 0) {
+    write(fd, s, strlen(s));
+    close(fd);
+  }
+}
+
+// Does path exist and hold exactly s?
+static int
+holds(char *path, char *s)
+{
+  char buf[64];
+  int fd = open(path, O_RDONLY), n;
+
+  if (fd < 0)
+    return 0;
+  n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n < 0)
+    return 0;
+  buf[n] = 0;
+  return strcmp(buf, s) == 0;
+}
+
+static int
+exists(char *path)
+{
+  struct stat st;
+
+  return stat(path, &st) == 0;
+}
+
+// Without a shadow table a speculative write goes straight to disk, so
+// write a probe file inside a speculation and see whether an outsider can
+// see it before the abort.
+static void
+probe_shadows(void)
+{
+  int id = open_spec();
+
+  put("/sc_probe", "old");
+  if (fork() == 0) {
+    int fd;
+
+    if (xjoin(id) < 0)
+      exit(1);
+    fd = open("/sc_probe", O_WRONLY);
+    write(fd, "new", 3);
+    close(fd);
+    exit(0);
+  }
+  wait(0);
+  have_shadows = holds("/sc_probe", "old");
+  end_spec(id, 0);
+  unlink("/sc_probe");
+}
+
+// A speculative child unlinks /sc_a, overwrites the start of /sc_b,
+// creates /sc_c and writes to a pipe whose reader is outside.  Nothing may
+// be visible until commit; abort must leave everything as it was.
+static void
+test_files(int commit)
+{
+  int p[2], id, rpid, rst;
+
+  put("/sc_a", "A-old");
+  put("/sc_b", "B-old");
+  unlink("/sc_c");
+  pipe(p);
+  id = open_spec();
+  if (fork() == 0) {
+    int fd;
+
+    close(p[0]);
+    if (xjoin(id) < 0)
+      exit(1);
+    unlink("/sc_a");
+    fd = open("/sc_b", O_WRONLY);
+    write(fd, "hi", 2);
+    close(fd);
+    put("/sc_c", "cc");
+    write(p[1], "out", 3); // held, like console output
+    exit(0);
+  }
+  wait(0);
+  close(p[1]);
+
+  check(commit ? "files before commit: nothing visible outside"
+               : "files before abort: nothing visible outside",
+        exists("/sc_a") && holds("/sc_b", "B-old") && !exists("/sc_c"));
+
+  // The reader is outside; when it gets the output the files must already
+  // be changed (output is released only after the files are committed).
+  rpid = fork();
+  if (rpid == 0) {
+    char buf[8];
+    int n = read(p[0], buf, sizeof(buf));
+
+    if (commit)
+      exit(n == 3 && !exists("/sc_a") && holds("/sc_b", "hiold") &&
+                   holds("/sc_c", "cc")
+               ? 0
+               : 1);
+    exit(n == 0 ? 0 : 1); // abort: only end-of-file
+  }
+  close(p[0]);
+  end_spec(id, commit);
+  wait(&rst);
+
+  if (commit) {
+    check("files commit: unlink, overwrite and create all applied",
+          !exists("/sc_a") && holds("/sc_b", "hiold") && holds("/sc_c", "cc"));
+    check("files commit: output arrives only after the files changed",
+          rst == 0);
+  } else {
+    check("files abort: unlink, overwrite and create all undone",
+          holds("/sc_a", "A-old") && holds("/sc_b", "B-old") &&
+              !exists("/sc_c"));
+    check("files abort: held output dropped", rst == 0);
+  }
+  unlink("/sc_a");
+  unlink("/sc_b");
+  unlink("/sc_c");
+}
+
+// Inside the speculation a write is read back; outside it is not seen.
+static void
+test_read_own_writes(void)
+{
+  int id, st;
+
+  put("/sc_b", "B-old");
+  id = open_spec();
+  if (fork() == 0) {
+    int fd;
+
+    if (xjoin(id) < 0)
+      exit(2);
+    fd = open("/sc_b", O_WRONLY);
+    write(fd, "NEW", 3);
+    close(fd);
+    exit(holds("/sc_b", "NEWold") ? 0 : 1);
+  }
+  wait(&st);
+  check("read-your-own-writes inside the speculation", st == 0);
+  check("the same write is not seen outside", holds("/sc_b", "B-old"));
+  end_spec(id, 0);
+  check("and is gone after abort", holds("/sc_b", "B-old"));
+  unlink("/sc_b");
+}
+
+// Writing past what the shadow table can hold fails with -1, nothing
+// reaches the disk, and what was written before still commits cleanly.
+static void
+test_shadow_exhaustion(void)
+{
+  char blk[1024];
+  int id, ok, bad = 0;
+  struct stat st;
+  int fd;
+
+  unlink("/sc_big");
+  id = open_spec();
+  if (fork() == 0) {
+    int n = 0;
+
+    if (xjoin(id) < 0)
+      exit(255);
+    fd = open("/sc_big", O_CREATE | O_WRONLY);
+    for (; n < 200; n++) {
+      memset(blk, 'a' + n % 26, sizeof(blk));
+      if (write(fd, blk, sizeof(blk)) != sizeof(blk))
+        break;
+    }
+    close(fd);
+    exit(n < 200 ? n : 199);
+  }
+  wait(&ok);
+  check("a write past the shadow limit returns -1", ok > 0 && ok < 199);
+  check("nothing reached the disk before commit", !exists("/sc_big"));
+  check("commit after the limit was hit succeeds", end_spec(id, 1) == 0);
+  fd = open("/sc_big", O_RDONLY);
+  if (fd < 0 || fstat(fd, &st) < 0 || st.size != (uint)ok * 1024) {
+    bad = 1;
+  } else {
+    for (int i = 0; i < ok && !bad; i++) {
+      if (read(fd, blk, sizeof(blk)) != sizeof(blk) || blk[0] != 'a' + i % 26 ||
+          blk[1023] != 'a' + i % 26)
+        bad = 1;
+    }
+  }
+  if (fd >= 0)
+    close(fd);
+  check("exactly the writes that succeeded are on disk", !bad);
+  unlink("/sc_big");
+}
+
+// A second xcommit or xabort, from another member or after the other
+// one, fails and does not panic.
+static void
+test_commit_errors(void)
+{
+  int id, st, st2;
+
+  // (Members cannot signal each other through a pipe: a write to a
+  // reader outside the speculation is held.  Use ticks instead.)
+  id = open_spec();
+  if (fork() == 0) { // member one commits first
+    if (xjoin(id) < 0)
+      exit(2);
+    pause(10);
+    exit(xcommit() == 0 ? 0 : 1);
+  }
+  if (fork() == 0) { // member two tries after one has committed
+    if (xjoin(id) < 0)
+      exit(2);
+    pause(40);
+    exit(xcommit() == -1 && xabort() == -1 ? 0 : 1);
+  }
+  wait(&st);
+  wait(&st2);
+  check("a second member's xcommit/xabort after the commit fails",
+        st == 0 && st2 == 0);
+
+  id = open_spec();
+  end_spec(id, 0);
+  check("commit after abort fails", end_spec(id, 1) != 0);
+  check("abort after abort fails", end_spec(id, 0) != 0);
+}
+
+// Modes used by scripts/tests/test_spec_crash.py.
+static int
+crash_modes(int argc, char **argv)
+{
+  if (argc == 2 && strcmp(argv[1], "probe") == 0) {
+    probe_shadows();
+    printf("spectest: shadow table: %s\n", have_shadows ? "yes" : "no");
+    return 0;
+  }
+  if (argc == 4 && strcmp(argv[1], "write") == 0) { // inside a speculation
+    int fd = open(argv[2], O_WRONLY);
+
+    if (fd < 0 || write(fd, argv[3], strlen(argv[3])) < 0)
+      return 1;
+    close(fd);
+    printf("spectest: wrote %s\n", argv[2]); // held until commit
+    return 0;
+  }
+  if (argc == 4 && strcmp(argv[1], "crashcommit") == 0) {
+    if (xjoin(atoi(argv[2])) < 0)
+      return 1;
+    crashat(atoi(argv[3]));
+    printf("spectest: commit returned %d\n", xcommit());
+    crashat(0);
+    return 0;
+  }
+  return -1;
+}
+
+int
+main(int argc, char **argv)
+{
+  int r = crash_modes(argc, argv);
+
+  if (r >= 0)
+    exit(r);
+
+  probe_shadows();
+  printf("spectest: shadow table: %s\n", have_shadows ? "yes" : "no");
+
   test_rules();
   test_pipe_commit();
   test_pipe_abort();
@@ -374,6 +658,21 @@ main(void)
   test_reader_inside();
   test_orphan_session();
   test_large_pipe_commit();
+  test_commit_errors();
+
+  // File effects need the shadow table (Heril's PR); until it is merged
+  // these are reported as SKIP, not FAILED.
+  if (have_shadows) {
+    test_files(0);
+    test_files(1);
+    test_read_own_writes();
+    test_shadow_exhaustion();
+  } else {
+    skip("files abort");
+    skip("files commit");
+    skip("read-your-own-writes");
+    skip("shadow exhaustion");
+  }
 
   if (failures == 0)
     printf("spectest: all tests passed\n");
