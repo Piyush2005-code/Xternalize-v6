@@ -44,16 +44,12 @@ _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
 #endif
 
 // TEMP until Heril's PR merges: his shadow.c defines these, same names and
-// signatures.  shadow_get() is the one function his table does not have yet
-// and must add: the i-th shadow (0-based) owned by spec, or -1 when there
-// are fewer.  *data points into the table and stays valid until
-// shadow_free_all(spec).
+// signatures (shadow_get(), the iterator, is real now and has no stub).
 struct shadow *shadow_find(int, uint, uint) __attribute__((weak));
 struct shadow *shadow_alloc(int, uint, uint, struct buf *)
   __attribute__((weak));
 void shadow_free_all(int) __attribute__((weak));
 int shadow_count(int) __attribute__((weak));
-int shadow_get(int, int, uint *, uint *, char **) __attribute__((weak));
 
 struct shadow *
 shadow_find(int spec, uint dev, uint blockno)
@@ -76,12 +72,6 @@ int
 shadow_count(int spec)
 {
   return 0;
-}
-
-int
-shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
-{
-  return -1;
 }
 
 static int crash_left;  // panic at this crash point; 0 = off
