@@ -174,3 +174,15 @@ sys_setsid(void)
   release(&p->lock);
   return 0;
 }
+
+// crashat(n): make the n-th crash point of the next xcommit panic (see
+// kernel/speccommit.c); 0 turns it off.  Admin only: it takes the kernel down.
+uint64
+sys_crashat(void)
+{
+  int n;
+
+  argint(0, &n);
+  crash_set(n);
+  return 0;
+}

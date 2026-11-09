@@ -70,6 +70,8 @@ void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
 void            begin_op(void);
 void            end_op(void);
+void            begin_op_n(int);
+void            end_op_n(int);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);
@@ -132,6 +134,13 @@ int             spec_end(int);
 int             spec_hold(struct pipe*, int, uint64, int);
 int             spec_pull(struct pipe*, uint64, int);
 void            spec_reclaim_session(int);
+int             spec_can_shadow(int);
+
+// speccommit.c
+int             spec_commit_files(int);
+void            spec_discard_files(int);
+void            crash_point(void);
+void            crash_set(int);
 
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);
