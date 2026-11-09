@@ -80,6 +80,7 @@ struct shadow*  shadow_find(int, uint, uint);
 struct shadow*  shadow_alloc(int, uint, uint, struct buf*);
 void            shadow_free_all(int);
 int             shadow_count(int);
+int             shadow_get(int, int, uint*, uint*, char**);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);

@@ -95,3 +95,29 @@ shadow_count(int spec)
   release(&stable.lock);
   return n;
 }
+// The i-th (0-based, in table order) shadow owned by speculation spec: sets
+// *dev, *blockno and *data (a pointer into the table, valid until
+// shadow_free_all(spec)) and returns 0; returns -1 when spec owns fewer than
+// i+1 shadows.  This is the iterator xcommit uses to walk a speculation's
+// blocks; shadow_count() says how many to expect.
+int
+shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
+{
+  int ret = -1;
+
+  acquire(&stable.lock);
+  for (int k = 0; k < MAXSHADOWBLOCKS; k++) {
+    struct shadow *s = &stable.shadows[k];
+    if (s->spec != spec)
+      continue;
+    if (i-- == 0) {
+      *dev = s->dev;
+      *blockno = s->blockno;
+      *data = s->data;
+      ret = 0;
+      break;
+    }
+  }
+  release(&stable.lock);
+  return ret;
+}
