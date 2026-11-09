@@ -48,16 +48,20 @@ fsinit(int dev)
   ireclaim(dev);
 }
 
-// Zero a block.
-static void
+// Zero a block.  Returns 0, or -1 if log_write() failed (a speculation whose
+// shadow table is full): every caller below passes that failure up, so the
+// system call returns -1 instead of carrying on with a lost write.
+static int
 bzero(int dev, int bno)
 {
   struct buf *bp;
+  int r;
 
   bp = bread(dev, bno);
   memset(bp->data, 0, BSIZE);
-  log_write(bp);
+  r = log_write(bp);
   brelse(bp);
+  return r;
 }
 
 // Blocks.
@@ -77,9 +81,13 @@ balloc(uint dev)
       m = 1 << (bi % 8);
       if ((bp->data[bi / 8] & m) == 0) { // Is block free?
         bp->data[bi / 8] |= m;           // Mark block in use.
-        log_write(bp);
+        if (log_write(bp) < 0) {
+          brelse(bp);
+          return 0;
+        }
         brelse(bp);
-        bzero(dev, b + bi);
+        if (bzero(dev, b + bi) < 0)
+          return 0;
         return b + bi;
       }
     }
@@ -89,10 +97,12 @@ balloc(uint dev)
   return 0;
 }
 
-// Free a disk block.
-static void
+// Free a disk block.  Returns 0, or -1 if log_write() failed.
+static int
 bfree(int dev, uint b)
 {
+  int r;
+
   struct buf *bp;
   int bi, m;
 
@@ -102,8 +112,9 @@ bfree(int dev, uint b)
   if ((bp->data[bi / 8] & m) == 0)
     panic("freeing free block");
   bp->data[bi / 8] &= ~m;
-  log_write(bp);
+  r = log_write(bp);
   brelse(bp);
+  return r;
 }
 
 // Inodes.
@@ -213,7 +224,10 @@ ialloc(uint dev, short type)
       dip->uid = myproc() ? myproc()->uid : 0;
       dip->mode = (type == T_DIR) ? MODE_DIR
                                   : ((type == T_DEVICE) ? MODE_DEV : MODE_FILE);
-      log_write(bp); // mark it allocated on the disk
+      if (log_write(bp) < 0) { // mark it allocated on the disk
+        brelse(bp);
+        return 0;
+      }
       brelse(bp);
       return iget(dev, inum);
     }
@@ -227,11 +241,13 @@ ialloc(uint dev, short type)
 // Must be called after every change to an ip->xxx field
 // that lives on disk.
 // Caller must hold ip->lock.
-void
+// Returns 0, or -1 if log_write() failed.
+int
 iupdate(struct inode *ip)
 {
   struct buf *bp;
   struct dinode *dip;
+  int r;
 
   bp = bread(ip->dev, IBLOCK(ip->inum, sb));
   dip = (struct dinode *)bp->data + ip->inum % IPB;
@@ -243,8 +259,9 @@ iupdate(struct inode *ip)
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
   dip->uid = ip->uid;
   dip->mode = ip->mode;
-  log_write(bp);
+  r = log_write(bp);
   brelse(bp);
+  return r;
 }
 
 // Find the inode with number inum on device dev
@@ -296,18 +313,30 @@ idup(struct inode *ip)
 
 // Lock the given inode.
 // Reads the inode from disk if necessary.
+//
+// The in-memory inode is shared by every process, so it must not carry one
+// speculation's changes (a longer size, new block addresses, a new type)
+// over to a process that is not in it, or past an xabort.  Each cached inode
+// therefore remembers the view of the disk it was read in (ip->view: the
+// speculation id, 0 for the real disk) and is read again whenever the process
+// locking it is in a different view.  Every change is written back with
+// iupdate() before the unlock, into the shadow for a speculative process, so
+// nothing is lost by re-reading.  Processes outside any speculation never
+// take the extra path.
 void
 ilock(struct inode *ip)
 {
   struct buf *bp;
   struct dinode *dip;
+  int view = myproc() ? myproc()->spec : 0;
 
   if (ip == 0 || ip->ref < 1)
     panic("ilock");
 
   acquiresleep(&ip->lock);
 
-  if (ip->valid == 0) {
+  if (ip->valid == 0 || ip->view != view) {
+    int fresh = ip->valid == 0;
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     dip = (struct dinode *)bp->data + ip->inum % IPB;
     ip->type = dip->type;
@@ -320,7 +349,11 @@ ilock(struct inode *ip)
     ip->mode = dip->mode;
     brelse(bp);
     ip->valid = 1;
-    if (ip->type == 0)
+    ip->view = view;
+    // type 0 after a view change means the inode does not exist in this
+    // view (e.g. created inside a speculation that was aborted): callers
+    // that hold it open (file.c) check ip->type.
+    if (ip->type == 0 && fresh)
       panic("ilock: no type");
   }
 }
@@ -348,14 +381,16 @@ iunlock(struct inode *ip)
 }
 
 // Mark the on-disk inode free.
-static void
+static int
 ifree(uint dev, uint inum)
 {
+  int r;
   struct buf *bp = bread(dev, IBLOCK(inum, sb));
   struct dinode *dip = (struct dinode *)bp->data + inum % IPB;
   dip->type = 0;
-  log_write(bp);
+  r = log_write(bp);
   brelse(bp);
+  return r;
 }
 
 // Drop a reference to an in-memory inode.
@@ -373,6 +408,11 @@ iput(struct inode *ip)
   // Last reference of an unlinked inode?  Capture dev/inum before ref--,
   // since once ref hits 0, ip may be recycled by a concurrent iget()
   // for a different inum.
+  int view = myproc() ? myproc()->spec : 0;
+  // In-core fields read in another view (see ilock) say nothing about this
+  // one: do not free by them; just forget them with the last reference.
+  if (ip->ref == 1 && ip->valid && ip->view != view)
+    ip->valid = 0;
   int last = (ip->ref == 1 && ip->valid && ip->nlink == 0);
   uint dev = ip->dev, inum = ip->inum;
 
@@ -467,7 +507,8 @@ bmap(struct inode *ip, uint bn)
       addr = balloc(ip->dev);
       if (addr) {
         a[bn] = addr;
-        log_write(bp);
+        if (log_write(bp) < 0)
+          addr = 0;
       }
     }
     brelse(bp);
@@ -479,16 +520,18 @@ bmap(struct inode *ip, uint bn)
 
 // Truncate inode (discard contents).
 // Caller must hold ip->lock.
-void
+// Returns 0, or -1 if a log_write() failed (the truncate is then only
+// partly done in the speculation's shadows, which is now FAILED).
+int
 itrunc(struct inode *ip)
 {
-  int i, j;
+  int i, j, r = 0;
   struct buf *bp;
   uint *a;
 
   for (i = 0; i < NDIRECT; i++) {
     if (ip->addrs[i]) {
-      bfree(ip->dev, ip->addrs[i]);
+      r |= bfree(ip->dev, ip->addrs[i]);
       ip->addrs[i] = 0;
     }
   }
@@ -498,15 +541,16 @@ itrunc(struct inode *ip)
     a = (uint *)bp->data;
     for (j = 0; j < NINDIRECT; j++) {
       if (a[j])
-        bfree(ip->dev, a[j]);
+        r |= bfree(ip->dev, a[j]);
     }
     brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
+    r |= bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
   }
 
   ip->size = 0;
-  iupdate(ip);
+  r |= iupdate(ip);
+  return r ? -1 : 0;
 }
 
 // Copy stat information from inode.
@@ -582,7 +626,10 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
       brelse(bp);
       break;
     }
-    log_write(bp);
+    if (log_write(bp) < 0) { // shadow table full: report a short write
+      brelse(bp);
+      break;
+    }
     brelse(bp);
   }
 
@@ -592,7 +639,8 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
   // write the i-node back to disk even if the size didn't change
   // because the loop above might have called bmap() and added a new
   // block to ip->addrs[].
-  iupdate(ip);
+  if (iupdate(ip) < 0)
+    return -1;
 
   return tot;
 }

@@ -365,12 +365,6 @@ test_large_pipe_commit(void)
 
 static int have_shadows; // do file writes inside a speculation stay held?
 
-static void
-skip(char *name)
-{
-  printf("spectest: SKIP %s (needs shadow table)\n", name);
-}
-
 // Replace the contents of path with s.
 static void
 put(char *path, char *s)
@@ -406,6 +400,28 @@ exists(char *path)
   struct stat st;
 
   return stat(path, &st) == 0;
+}
+
+static int
+fsize(char *path)
+{
+  struct stat st;
+
+  return stat(path, &st) == 0 ? (int)st.size : -1;
+}
+
+// Write n bytes of c to path (truncating it), 1000 at a time.
+static void
+fill_file(char *path, char c, int n)
+{
+  char buf[1000];
+  int fd = open(path, O_CREATE | O_WRONLY | O_TRUNC);
+
+  memset(buf, c, sizeof(buf));
+  for (int done = 0; fd >= 0 && done < n; done += 1000)
+    write(fd, buf, n - done < 1000 ? n - done : 1000);
+  if (fd >= 0)
+    close(fd);
 }
 
 // Without a shadow table a speculative write goes straight to disk, so
@@ -501,6 +517,106 @@ test_files(int commit)
   unlink("/sc_c");
 }
 
+// Isolation: while the speculation is open an outside process sees the
+// OLD size, data and directory (neither the shared buffer cache nor the
+// in-memory inodes hold anything speculative); a file created and unlinked
+// inside never shows up; and after xabort the cache and inodes are exactly as
+// before, so ordinary use afterwards (truncate, rewrite, unlink: all of which
+// would panic or corrupt on a stale inode) works.
+static void
+test_isolation(int commit)
+{
+  int id, st;
+
+  fill_file("/sc_g", 'g', 3000);
+  put("/sc_m", "old-data-1");
+  unlink("/sc_n");
+  unlink("/sc_k");
+  id = open_spec();
+  if (fork() == 0) {
+    if (xjoin(id) < 0)
+      exit(1);
+    fill_file("/sc_g", 'N', 8000); // grows the file, allocates blocks
+    put("/sc_m", "NEW-DATA-9");
+    put("/sc_n", "n"); // created and unlinked inside
+    unlink("/sc_n");
+    put("/sc_k", "k");
+    exit(fsize("/sc_g") == 8000 && holds("/sc_m", "NEW-DATA-9") &&
+             !exists("/sc_n") && holds("/sc_k", "k")
+           ? 0
+           : 2);
+  }
+  wait(&st);
+  check("isolation: the member sees its own changes", st == 0);
+  check("isolation: outside sees the old size (stat)", fsize("/sc_g") == 3000);
+  check("isolation: outside sees the old data", holds("/sc_m", "old-data-1"));
+  check("isolation: create+unlink inside is invisible outside",
+        !exists("/sc_n") && !exists("/sc_k"));
+
+  end_spec(id, commit);
+  if (commit) {
+    check("isolation: commit makes the new size and data visible",
+          fsize("/sc_g") == 8000 && holds("/sc_m", "NEW-DATA-9") &&
+            holds("/sc_k", "k"));
+    check("isolation: created-and-unlinked file stays gone", !exists("/sc_n"));
+  } else {
+    check("isolation: abort leaves the old size, data and directory",
+          fsize("/sc_g") == 3000 && holds("/sc_m", "old-data-1") &&
+            !exists("/sc_k") && !exists("/sc_n"));
+  }
+  // Use the files normally afterwards: rewrite shorter (itrunc frees the
+  // real blocks), grow again, then unlink.  A stale inode would free blocks
+  // that were never allocated and panic here.
+  fill_file("/sc_g", 'x', 100);
+  check("isolation: rewrite after the speculation works",
+        fsize("/sc_g") == 100);
+  fill_file("/sc_g", 'y', 6000);
+  check("isolation: growing again after the speculation works",
+        fsize("/sc_g") == 6000);
+  unlink("/sc_g");
+  unlink("/sc_m");
+  unlink("/sc_k");
+  check("isolation: files unlink cleanly afterwards",
+        !exists("/sc_g") && !exists("/sc_m") && !exists("/sc_k"));
+}
+
+// Reading takes no shadow slot: a slot is kept only for a block that was
+// written.  Read a 40 KB file inside a speculation, then see how many 1 KB
+// writes still fit (about 59 with nothing read first).
+static void
+test_read_takes_no_slot(void)
+{
+  char blk[1024];
+  int id, st;
+
+  fill_file("/sc_r", 'r', 40000);
+  unlink("/sc_w");
+  id = open_spec();
+  if (fork() == 0) {
+    int fd, n = 0, tot = 0;
+
+    if (xjoin(id) < 0)
+      exit(255);
+    fd = open("/sc_r", O_RDONLY);
+    while ((n = read(fd, blk, sizeof(blk))) > 0)
+      tot += n;
+    close(fd);
+    fd = open("/sc_w", O_CREATE | O_WRONLY);
+    for (n = 0; n < 100; n++)
+      if (write(fd, blk, sizeof(blk)) != sizeof(blk))
+        break;
+    close(fd);
+    exit(tot == 40000 ? n : 200);
+  }
+  wait(&st);
+  printf("spectest: %d writes fit after reading 40 blocks\n", st);
+  check("reading 40 blocks inside a speculation burned no shadow slots",
+        st >= 50 && st <= 100);
+  end_spec(id, 0);
+  unlink("/sc_r");
+  unlink("/sc_w");
+}
+
 // Inside the speculation a write is read back; outside it is not seen.
 static void
 test_read_own_writes(void)
@@ -533,14 +649,13 @@ static void
 test_shadow_exhaustion(void)
 {
   char blk[1024];
-  int id, ok, bad = 0;
-  struct stat st;
-  int fd;
+  int id, ok, n_ok, mk_failed;
 
   unlink("/sc_big");
   id = open_spec();
   if (fork() == 0) {
     int n = 0;
+    int fd;
 
     if (xjoin(id) < 0)
       exit(255);
@@ -551,27 +666,25 @@ test_shadow_exhaustion(void)
         break;
     }
     close(fd);
-    exit(n < 200 ? n : 199);
+    // The table is full: a mkdir (it needs a new data block) must fail too,
+    // not silently lose its blocks.
+    exit(n + 1000 * (mkdir("/sc_d") < 0) + 10000 * (n >= 200));
   }
   wait(&ok);
-  printf("spectest: %d 1KB writes succeeded before the limit\n", ok);
-  check("a write past the shadow limit returns -1", ok > 0 && ok < 199);
-  check("nothing reached the disk before commit", !exists("/sc_big"));
-  check("commit after the limit was hit succeeds", end_spec(id, 1) == 0);
-  fd = open("/sc_big", O_RDONLY);
-  if (fd < 0 || fstat(fd, &st) < 0 || st.size != (uint)ok * 1024) {
-    bad = 1;
-  } else {
-    for (int i = 0; i < ok && !bad; i++) {
-      if (read(fd, blk, sizeof(blk)) != sizeof(blk) || blk[0] != 'a' + i % 26 ||
-          blk[1023] != 'a' + i % 26)
-        bad = 1;
-    }
-  }
-  if (fd >= 0)
-    close(fd);
-  check("exactly the writes that succeeded are on disk", !bad);
-  unlink("/sc_big");
+  n_ok = ok % 1000;
+  mk_failed = (ok / 1000) % 10;
+  printf("spectest: %d 1KB writes succeeded before the limit\n", n_ok);
+  check("a write past the shadow limit returns -1", n_ok > 0 && ok < 10000);
+  check("mkdir with a full shadow table returns -1", mk_failed == 1);
+  check("nothing reached the disk before commit",
+        !exists("/sc_big") && !exists("/sc_d"));
+  // A refused write may have left an operation half done in the shadows, so
+  // the speculation is FAILED: xcommit returns -1 and aborts it.
+  check("xcommit of a speculation with a refused write returns -1",
+        end_spec(id, 1) != 0);
+  check("a failed speculation left nothing on the disk",
+        !exists("/sc_big") && !exists("/sc_d"));
+  check("a failed speculation is gone (xabort refuses)", end_spec(id, 0) != 0);
 }
 
 // A second xcommit or xabort, from another member or after the other
@@ -702,19 +815,17 @@ main(int argc, char **argv)
   test_large_pipe_commit();
   test_commit_errors();
 
-  // File effects need the shadow table (Heril's PR); until it is merged
-  // these are reported as SKIP, not FAILED.
-  if (have_shadows) {
-    test_files(0);
-    test_files(1);
-    test_read_own_writes();
-    test_shadow_exhaustion();
-  } else {
-    skip("files abort");
-    skip("files commit");
-    skip("read-your-own-writes");
-    skip("shadow exhaustion");
-  }
+  // The shadow table is part of the kernel now, so a speculative file write
+  // that an outsider can see is a failure (isolation broken), not a SKIP.
+  check("speculative file writes are invisible outside (shadow probe)",
+        have_shadows);
+  test_files(0);
+  test_files(1);
+  test_read_own_writes();
+  test_isolation(0);
+  test_isolation(1);
+  test_read_takes_no_slot();
+  test_shadow_exhaustion();
 
   if (failures == 0)
     printf("spectest: all tests passed\n");

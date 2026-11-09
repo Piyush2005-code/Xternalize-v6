@@ -4,8 +4,8 @@
 // keeps its block writes in memory.  xcommit (spec_end in spec.c) calls
 // spec_commit_files() to put them on disk, all in ONE log transaction:
 //
-//   1. the caller becomes non-speculative for the loop, so bread() and
-//      log_write() reach the real blocks, not the shadows;
+//   1. the real blocks are read with bread_raw(), and the buffers are not
+//      private ones, so log_write() stages them in the real log;
 //   2. begin_op_n(n) reserves room for all n shadow blocks;
 //   3. each shadow is copied over its real block and log_write()n;
 //   4. end_op_n(n) commits the transaction (write_head is the commit
@@ -20,10 +20,7 @@
 //   write_head, the point just after it, one point per installed block,
 //   and the point just after end_op() returns (before any output).
 //
-// The shadow table itself is not here.  The weak functions below are
-// TEMPORARY stand-ins until Heril's shadow table is merged; his real
-// definitions replace them at link time.  They make every speculation
-// look like it has no shadows, so file changes are not held.
+// The shadow table itself is in shadow.c.
 
 #include "types.h"
 #include "param.h"
@@ -35,54 +32,9 @@
 #include "buf.h"
 #include "defs.h"
 
-struct shadow;
-
 // One xcommit is one transaction, so the shadow table must fit in it.
-#ifdef MAXSHADOWBLOCKS
 _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
                "MAXSHADOWBLOCKS must fit in one log transaction");
-#endif
-
-// TEMP until Heril's PR merges: his shadow.c defines these, same names and
-// signatures.  shadow_get() is the one function his table does not have yet
-// and must add: the i-th shadow (0-based) owned by spec, or -1 when there
-// are fewer.  *data points into the table and stays valid until
-// shadow_free_all(spec).
-struct shadow *shadow_find(int, uint, uint) __attribute__((weak));
-struct shadow *shadow_alloc(int, uint, uint, struct buf *)
-  __attribute__((weak));
-void shadow_free_all(int) __attribute__((weak));
-int shadow_count(int) __attribute__((weak));
-int shadow_get(int, int, uint *, uint *, char **) __attribute__((weak));
-
-struct shadow *
-shadow_find(int spec, uint dev, uint blockno)
-{
-  return 0;
-}
-
-struct shadow *
-shadow_alloc(int spec, uint dev, uint blockno, struct buf *b)
-{
-  return 0;
-}
-
-void
-shadow_free_all(int spec)
-{
-}
-
-int
-shadow_count(int spec)
-{
-  return 0;
-}
-
-int
-shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
-{
-  return -1;
-}
 
 static int crash_left;  // panic at this crash point; 0 = off
 static int crash_armed; // inside spec_commit_files
@@ -108,21 +60,15 @@ crash_point(void)
 int
 spec_commit_files(int id)
 {
-  struct proc *p = myproc();
   int n = shadow_count(id);
-  int saved;
 
-  if (n > SPECBLOCKS)
+  // The table was just read under its lock, so any refused write of a
+  // member (which marks the speculation failed under that lock) is visible.
+  if (n > SPECBLOCKS || spec_failed(id))
     return -1;
 
   crash_armed = 1;
   if (n > 0) {
-    // Read and write the real blocks, not our own shadows.
-    acquire(&p->lock);
-    saved = p->spec;
-    p->spec = 0;
-    release(&p->lock);
-
     begin_op_n(n);
     for (int i = 0; i < n; i++) {
       uint dev, blockno;
@@ -131,17 +77,13 @@ spec_commit_files(int id)
 
       if (shadow_get(id, i, &dev, &blockno, &data) < 0)
         panic("spec_commit_files: shadow vanished");
-      bp = bread(dev, blockno);
+      bp = bread_raw(dev, blockno); // the real block, not a private copy
       memmove(bp->data, data, BSIZE);
       log_write(bp);
       brelse(bp);
       crash_point(); // crashat(): after staging a shadow block
     }
     end_op_n(n); // the transaction commits here
-
-    acquire(&p->lock);
-    p->spec = saved;
-    release(&p->lock);
   }
   crash_point(); // crashat(): files committed, output not yet released
   crash_armed = 0;

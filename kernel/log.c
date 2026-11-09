@@ -6,6 +6,7 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
+#include "proc.h"
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -79,8 +80,9 @@ install_trans(int recovering)
     if (recovering) {
       printk("recovering tail %d dst %d\n", tail, log.lh.block[tail]);
     }
-    struct buf *lbuf = bread(log.dev, log.start + tail + 1); // read log block
-    struct buf *dbuf = bread(log.dev, log.lh.block[tail]);   // read dst
+    struct buf *lbuf =
+      bread_raw(log.dev, log.start + tail + 1);                // read log block
+    struct buf *dbuf = bread_raw(log.dev, log.lh.block[tail]); // read dst
     memmove(dbuf->data, lbuf->data, BSIZE); // copy block to dst
     bwrite(dbuf);                           // write dst to disk
     if (recovering == 0)
@@ -96,7 +98,7 @@ install_trans(int recovering)
 static void
 read_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
+  struct buf *buf = bread_raw(log.dev, log.start);
   struct logheader *lh = (struct logheader *)(buf->data);
   int i;
   log.lh.n = lh->n;
@@ -112,7 +114,7 @@ read_head(void)
 static void
 write_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
+  struct buf *buf = bread_raw(log.dev, log.start);
   struct logheader *hb = (struct logheader *)(buf->data);
   int i;
   hb->n = log.lh.n;
@@ -151,6 +153,8 @@ begin_op_n(int n)
 
   if (n > LOGBLOCKS)
     panic("begin_op_n: too big");
+  if (myproc() != 0)
+    myproc()->fsfail = 0;
   acquire(&log.lock);
   if (big)
     log.bigwait++;
@@ -173,6 +177,21 @@ begin_op_n(int n)
       break;
     }
   }
+}
+
+// Was any write of this process's current operation (since its begin_op())
+// refused by log_write()?  Reads and clears the flag.  fs.c passes -1 up
+// wherever it can; the few callers that cannot (iput() freeing an inode,
+// say) leave it to the system call to ask this after end_op().
+int
+op_failed(void)
+{
+  struct proc *p = myproc();
+  int r = p != 0 && p->fsfail;
+
+  if (p != 0)
+    p->fsfail = 0;
+  return r;
 }
 
 // called at the end of each FS system call.
@@ -223,8 +242,8 @@ write_log(void)
   int tail;
 
   for (tail = 0; tail < log.lh.n; tail++) {
-    struct buf *to = bread(log.dev, log.start + tail + 1); // log block
-    struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
+    struct buf *to = bread_raw(log.dev, log.start + tail + 1); // log block
+    struct buf *from = bread_raw(log.dev, log.lh.block[tail]); // cache block
     memmove(to->data, from->data, BSIZE);
     bwrite(to); // write the log
     brelse(from);
@@ -255,9 +274,23 @@ commit()
 //   modify bp->data[]
 //   log_write(bp)
 //   brelse(bp)
-void
+//
+// Returns 0 on success, -1 on failure.
+int
 log_write(struct buf *b)
 {
+  // A private buffer belongs to a speculation (bio.c): its data goes into
+  // that speculation's shadow of the block and is never staged into the real
+  // log.  Which path is taken depends on the buffer, not on who is running,
+  // so a speculative process that happens to run the log's own commit still
+  // gets the real thing.
+  if (b->spec != 0) {
+    int r = shadow_put(b->spec, b->dev, b->blockno, (char *)b->data);
+    if (r < 0 && myproc() != 0)
+      myproc()->fsfail = 1; // for op_failed(), when a caller cannot pass -1 up
+    return r;
+  }
+
   int i;
 
   acquire(&log.lock);
@@ -276,6 +309,7 @@ log_write(struct buf *b)
     log.lh.n++;
   }
   release(&log.lock);
+  return 0;
 }
 
 uint64
