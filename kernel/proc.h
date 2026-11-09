@@ -103,5 +103,7 @@ struct proc {
   char name[16];               // Process name (debugging)
   int uid;                     // User ID: 0 for admin, 1 for normal user
   int spec;                    // Speculation id, 0 if not speculative
-  int sid;                     // Login-session id (its shell's pid), 0 if none
+  int fsfail; // a write of the current fs operation was refused
+              // (log.c op_failed()); cleared by begin_op()
+  int sid;    // Login-session id (its shell's pid), 0 if none
 };

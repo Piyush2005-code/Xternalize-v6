@@ -122,75 +122,97 @@ prints the table. Observed, CPUS=1 and 3 alike: points 1-5 old, 6-11 new,
   refused before anything is written (`spec_commit_files` returns -1 and the
   speculation is dropped).
 
-## What Heril's shadow table must provide
+## The shadow layer (isolation, failure, committing)
 
-`kernel/speccommit.c` defines **weak** stand-ins, marked "TEMP until Heril's PR
-merges", for every shadow function not on main, so this branch builds and the
-non-shadow tests run now. His definitions override them at link time. They need
-his exact names and signatures:
+The shadow table (`kernel/shadow.c`) plus these changes make the file side of a
+speculation correct. Each point lists the invariant and where it is enforced.
 
-```
-struct shadow *shadow_find(int spec, uint dev, uint blockno);
-struct shadow *shadow_alloc(int spec, uint dev, uint blockno, struct buf *b);
-void           shadow_free_all(int spec);
-int            shadow_count(int spec);
-int            shadow_get(int spec, int i, uint *dev, uint *blockno, char **data);   // NEW
-```
+**1. Isolation (`bio.c`).** A speculative process never gets, and so never
+modifies, a buffer of the shared cache; nobody else ever sees a speculative
+change. xv6 code does `bread(); edit bp->data; log_write(); brelse()`, so
+redirecting in `log_write()` is too late. `bread()` by a speculative process
+returns a *private* `struct buf` (pool of 64, `buf.spec != 0`), keyed by
+(spec, dev, blockno) with its own sleeplock - so members of one speculation
+still exclude each other the way cache buffers do - and filled from the
+speculation's shadow of the block if there is one, else from the real block.
+`brelse()` never puts it on the cache list; `bwrite()` panics on it.
+`log_write()` decides by the buffer, not by who is running: a private buffer's
+data goes to the shadow (`shadow_put`), never into the real log. (A speculative
+process can run the log's own commit from `end_op()`, so the log and
+`spec_commit_files()` read with `bread_raw()`, which is never redirected.)
 
-1. **`shadow_get`** is the one function his table does not have: the i-th
-   shadow (0-based) owned by `spec`, `-1` when there are fewer; `*data` points
-   into the table and stays valid until `shadow_free_all(spec)`.
-2. **A committing hook.** The speculative branch of `log_write()` must start
-   with `if (!spec_can_shadow(p->spec)) return -1;` (defined in `spec.c`), so
-   that members cannot add to or change shadows while the commit loop reads
-   them.
-3. **`MAXSHADOWBLOCKS <= SPECBLOCKS`** (checked by a `_Static_assert` when
-   `MAXSHADOWBLOCKS` is defined).
-4. **The buffer cache must not be modified in place.** With the current
-   `bread`/`log_write` redirect a speculative write edits the *shared cache
-   buffer* before `log_write` copies it into the shadow, and `bread` copies
-   shadow data back into that shared buffer. An outside process then reads the
-   speculative data, and `xabort` does not undo it. (Seen when merging: the
-   `spectest` probe reports "shadow table: no" because the write is visible
-   outside.) Speculative callers need a private buffer that is never in the
-   cache list; for testing the merge I used a small pool of private buffers in
-   `bio.c`.
-5. **`log_write()`'s -1 is ignored by every caller** (`writei`, `balloc`,
-   `iupdate`, ...), so a full shadow table loses writes silently and commits a
-   half-written file. The simplest fix: a speculative `filewrite` first checks
-   that at least `MAXOPBLOCKS` shadow slots are free and fails the write before
-   touching any block. `test_shadow_exhaustion` in `spectest` checks the
-   behaviour.
-6. The shadow table is shared by all speculations (64 in total), not per
-   speculation: one large speculation can starve another.
+*Read-only accesses burn no slot:* a private buffer exists only while held and
+a shadow slot is created only by `log_write()`, so a block that was only read
+leaves nothing behind (test: after reading 40 blocks, the same 59 writes still
+fit).
+
+**1b. In-memory inodes (`fs.c`).** The inode table is a second shared cache:
+`writei` sets `ip->size`, `bmap` sets `ip->addrs[]`, before `iupdate()`. Each
+cached inode therefore carries `view` (the speculation whose view of the disk
+it was read in, 0 = real) and `ilock()` re-reads it when the caller's view
+differs. `iput()` only frees by in-core fields read in the caller's view.
+`fileread`/`filewrite` return -1 for an open file whose inode does not exist in
+the caller's view (created in an aborted speculation).
+
+**2. No silent loss (`fs.c`, `sysfile.c`, `spec.c`).** `log_write()` returns -1
+when the table is full, and that is now passed up through `bzero`, `balloc`,
+`bfree`, `ialloc`, `iupdate`, `ifree`, `itrunc`, `bmap` and `writei`, so
+`write`, `open(O_TRUNC)`, `link`, `unlink`, `mkdir` and `mknod` return -1. Where
+a function cannot return an error (`iput`, `create`'s `iupdate`) the per-process
+flag `p->fsfail` (set by `log_write`, cleared by `begin_op`, read by
+`op_failed()`) makes the syscall fail anyway. A refused write may leave an
+operation half done in the shadows, so the speculation is marked **FAILED**
+(`spec.c`, `failed`): `spec_commit_files()` refuses it, `spec_end()` drops it
+as for `xabort`, and `xcommit` returns -1. A FAILED speculation can only be
+aborted; reads inside it may show the half-done state.
+
+**3. `shadow_get(spec, i, &dev, &blockno, &data)`** is the iterator the commit
+walks; `shadow_count(spec)` says how many to expect.
+
+**4. Committing check.** `shadow_alloc` and `shadow_put` ask `spec_can_shadow()`
+(spec.c's existing `ending` flag) with the table lock held; the commit reads the
+table after `ending` is set. A member write therefore either lands before the
+commit counts the shadows or fails. Lock order: `stable.lock`, then `spec_lock`.
+
+Remaining limits of this layer:
+
+* The table is shared by all speculations (64 blocks in total), not per
+  speculation: one large speculation can starve another.
+* A member in the middle of a multi-block syscall while another member commits
+  can have the first half committed and the second half refused (the commit
+  does not wait for in-flight member operations).
+* A file descriptor to a file created inside an aborted speculation stays open
+  but every use returns -1; `xabort` does not close descriptors.
+* Whole-block shadows: an outside process that changes a block (bitmap, inode
+  block, directory block) while a speculation holds a shadow of it is
+  overwritten at commit (the conflict rule, above).
 
 ## Cost
 
 `scripts/bench_spec_cost.py` (CPUS=1, ms per KB written, uptime tick = 0.1 s,
-measured on a throwaway local merge with Heril's table, see PR; the numbers
-move with the merged code):
+measured on `help/shadow-fixes`, i.e. with the real shadow table):
 
 | KB | plain | inside a speculation | xbegin+write+xcommit | xbegin+write+xabort |
 |---|---|---|---|---|
-| 1 | 10.9 | 1.37 | 10.9 | 1.66 |
-| 4 | 10.2 | 0.37 | 5.5 | 0.49 |
-| 16 | 10.2 | 0.17 | 3.9 | 0.24 |
-| 48 | 10.4 | 0.13 | 3.6 | 0.16 |
-| 56 | 9.8 | **write fails** | **write fails** | **write fails** |
-| 64 | 10.2 | **write fails** | **write fails** | **write fails** |
+| 1 | 18.8 | 4.30 | 23.4 | 5.08 |
+| 4 | 17.2 | 1.27 | 10.9 | 1.47 |
+| 16 | 17.2 | 0.54 | 7.4 | 0.64 |
+| 48 | 17.7 | 0.46 | 8.9 | 0.52 |
+| 56 | 17.0 | 0.45 | 7.6 | 0.50 |
+| 64 | 15.6 | **write fails** | **write fails** | **write fails** |
 
 Plain writes pay one disk transaction per 3 KB. Inside a speculation they cost
 memory only; commit pays one transaction for everything, which is why its cost
-per KB falls as the speculation grows. At 56 KB the shadow table (64 blocks,
-minus the reservation for one operation) runs out and the write returns -1: that
-is the cliff, left in the CSV and the plot.
+per KB falls as the speculation grows. The cliff is at 64 KB: the shadow table (64 blocks) holds 56 KB of data plus the inode, indirect, bitmap and directory blocks, and the next write returns -1. (Before private buffers the cliff was at 56 KB; the plain column is noisier on this machine than in the first measurement.) The CSV and plot are in `scripts/logs/`.
 
 ## Tests
 
 * `user/spectest.c`: abort and commit file effects (unlink, overwrite, create),
   output arriving only after the files changed, read-your-own-writes,
-  exhaustion, and the commit/abort error paths. File cases print
-  `SKIP <case> (needs shadow table)` until the table is merged.
+  exhaustion (write -1, mkdir -1, xcommit -1), isolation (old size, data and
+  directory outside; create+unlink inside; abort leaves the cache intact),
+  read-takes-no-slot, and the commit/abort error paths. (With no shadow
+  table the file cases print `SKIP`.)
 * `scripts/tests/test_spec_crash.py`: the crash-point table above.
 * `scripts/bench_spec_cost.py`: write cost inside and outside a speculation.
 

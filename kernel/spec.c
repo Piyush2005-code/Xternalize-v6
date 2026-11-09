@@ -44,6 +44,8 @@ struct spec {
   int uid;    // user who began it; only they (or admin) may join
   int owner;  // login session that owns it; reclaimed when it exits
   int ending; // commit or abort in progress: hold nothing more
+  int failed; // a file write was refused (shadow table full): the changes
+              // are half done, so xcommit must refuse and abort instead
   int nheld;  // records in use
   struct held held[NHELD];
   int used; // bytes of buf in use
@@ -142,6 +144,7 @@ spec_begin(void)
   s->uid = p->uid;
   s->owner = p->sid;
   s->ending = 0;
+  s->failed = 0;
   s->nheld = 0;
   s->used = 0;
   acquire(&p->lock);
@@ -276,6 +279,35 @@ spec_can_shadow(int id)
   ok = s != 0 && !s->ending;
   release(&spec_lock);
   return ok;
+}
+
+// A write inside speculation id was refused because the shadow table is
+// full.  The operation it belonged to may be half done in the shadows, so the
+// speculation is FAILED: spec_end(commit) will not apply it, it aborts and
+// xcommit returns -1.  (docs/speculation-commit.md)
+void
+spec_mark_failed(int id)
+{
+  struct spec *s;
+
+  acquire(&spec_lock);
+  s = lookup(id);
+  if (s != 0)
+    s->failed = 1;
+  release(&spec_lock);
+}
+
+int
+spec_failed(int id)
+{
+  struct spec *s;
+  int r;
+
+  acquire(&spec_lock);
+  s = lookup(id);
+  r = s != 0 && s->failed;
+  release(&spec_lock);
+  return r;
 }
 
 // Hold n bytes that the calling (speculative) process is writing to pipe
