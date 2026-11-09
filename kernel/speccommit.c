@@ -49,7 +49,8 @@ _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
 // are fewer.  *data points into the table and stays valid until
 // shadow_free_all(spec).
 struct shadow *shadow_find(int, uint, uint) __attribute__((weak));
-struct shadow *shadow_alloc(int, uint, uint, struct buf *) __attribute__((weak));
+struct shadow *shadow_alloc(int, uint, uint, struct buf *)
+  __attribute__((weak));
 void shadow_free_all(int) __attribute__((weak));
 int shadow_count(int) __attribute__((weak));
 int shadow_get(int, int, uint *, uint *, char **) __attribute__((weak));

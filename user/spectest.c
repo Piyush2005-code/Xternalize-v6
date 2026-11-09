@@ -476,9 +476,9 @@ test_files(int commit)
 
     if (commit)
       exit(n == 3 && !exists("/sc_a") && holds("/sc_b", "hiold") &&
-                   holds("/sc_c", "cc")
-               ? 0
-               : 1);
+               holds("/sc_c", "cc")
+             ? 0
+             : 1);
     exit(n == 0 ? 0 : 1); // abort: only end-of-file
   }
   close(p[0]);
@@ -493,7 +493,7 @@ test_files(int commit)
   } else {
     check("files abort: unlink, overwrite and create all undone",
           holds("/sc_a", "A-old") && holds("/sc_b", "B-old") &&
-              !exists("/sc_c"));
+            !exists("/sc_c"));
     check("files abort: held output dropped", rst == 0);
   }
   unlink("/sc_a");
@@ -621,7 +621,8 @@ crash_modes(int argc, char **argv)
   if ((argc == 5 || argc == 6) && strcmp(argv[1], "fill") == 0) {
     char blk[1024];
     int left = atoi(argv[4]);
-    int fd = open(argv[2], argc == 6 ? O_CREATE | O_WRONLY | O_TRUNC : O_WRONLY);
+    int fd =
+      open(argv[2], argc == 6 ? O_CREATE | O_WRONLY | O_TRUNC : O_WRONLY);
 
     if (fd < 0)
       return 1;
@@ -658,7 +659,10 @@ crash_modes(int argc, char **argv)
       }
     close(fd);
     printf("spectest: state of %s: %s (%d old, %d new, %d other)\n", argv[2],
-           other ? "mixed" : nnew == 0 ? "old" : nold == 0 ? "new" : "mixed",
+           other       ? "mixed"
+           : nnew == 0 ? "old"
+           : nold == 0 ? "new"
+                       : "mixed",
            nold, nnew, other);
     return 0;
   }

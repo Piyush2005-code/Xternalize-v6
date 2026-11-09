@@ -32,6 +32,10 @@
 
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
+_Static_assert(LOGBLOCKS == SPECBLOCKS + 2 * MAXOPBLOCKS &&
+                 NBUF == LOGBLOCKS + MAXOPBLOCKS,
+               "param.h: LOGBLOCKS = SPECBLOCKS + 20, NBUF = LOGBLOCKS + 10");
+
 struct logheader {
   int n;
   int block[LOGBLOCKS];
