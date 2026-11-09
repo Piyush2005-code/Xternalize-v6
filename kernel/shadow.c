@@ -121,3 +121,56 @@ shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
   release(&stable.lock);
   return ret;
 }
+
+// Copy the speculation's shadow of (dev, blockno) into dst, under the table
+// lock.  Returns 1 if there is one, 0 if not.  (shadow_find() hands out a
+// pointer that outlives the lock; readers that can race with an abort use
+// this instead.)
+int
+shadow_read(int spec, uint dev, uint blockno, char *dst)
+{
+  int found = 0;
+
+  acquire(&stable.lock);
+  for (int i = 0; i < MAXSHADOWBLOCKS; i++) {
+    if (stable.shadows[i].spec == spec && stable.shadows[i].dev == dev &&
+        stable.shadows[i].blockno == blockno) {
+      memmove(dst, stable.shadows[i].data, BSIZE);
+      found = 1;
+      break;
+    }
+  }
+  release(&stable.lock);
+  return found;
+}
+
+// Store src as the speculation's version of (dev, blockno): update its
+// shadow, or take a free slot for it.  Returns 0, or -1 if the table is full
+// (nothing is stored then).  This is what log_write() does for a private
+// buffer.
+int
+shadow_put(int spec, uint dev, uint blockno, char *src)
+{
+  struct shadow *free = 0;
+  int ret = -1;
+
+  acquire(&stable.lock);
+  for (int i = 0; i < MAXSHADOWBLOCKS; i++) {
+    struct shadow *s = &stable.shadows[i];
+    if (s->spec == spec && s->dev == dev && s->blockno == blockno) {
+      free = s;
+      break;
+    }
+    if (s->spec == 0 && free == 0)
+      free = s;
+  }
+  if (free != 0) {
+    free->spec = spec;
+    free->dev = dev;
+    free->blockno = blockno;
+    memmove(free->data, src, BSIZE);
+    ret = 0;
+  }
+  release(&stable.lock);
+  return ret;
+}

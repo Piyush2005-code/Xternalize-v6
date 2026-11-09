@@ -4,8 +4,8 @@
 // keeps its block writes in memory.  xcommit (spec_end in spec.c) calls
 // spec_commit_files() to put them on disk, all in ONE log transaction:
 //
-//   1. the caller becomes non-speculative for the loop, so bread() and
-//      log_write() reach the real blocks, not the shadows;
+//   1. the real blocks are read with bread_raw(), and the buffers are not
+//      private ones, so log_write() stages them in the real log;
 //   2. begin_op_n(n) reserves room for all n shadow blocks;
 //   3. each shadow is copied over its real block and log_write()n;
 //   4. end_op_n(n) commits the transaction (write_head is the commit
@@ -98,21 +98,13 @@ crash_point(void)
 int
 spec_commit_files(int id)
 {
-  struct proc *p = myproc();
   int n = shadow_count(id);
-  int saved;
 
   if (n > SPECBLOCKS)
     return -1;
 
   crash_armed = 1;
   if (n > 0) {
-    // Read and write the real blocks, not our own shadows.
-    acquire(&p->lock);
-    saved = p->spec;
-    p->spec = 0;
-    release(&p->lock);
-
     begin_op_n(n);
     for (int i = 0; i < n; i++) {
       uint dev, blockno;
@@ -121,17 +113,13 @@ spec_commit_files(int id)
 
       if (shadow_get(id, i, &dev, &blockno, &data) < 0)
         panic("spec_commit_files: shadow vanished");
-      bp = bread(dev, blockno);
+      bp = bread_raw(dev, blockno); // the real block, not a private copy
       memmove(bp->data, data, BSIZE);
       log_write(bp);
       brelse(bp);
       crash_point(); // crashat(): after staging a shadow block
     }
     end_op_n(n); // the transaction commits here
-
-    acquire(&p->lock);
-    p->spec = saved;
-    release(&p->lock);
   }
   crash_point(); // crashat(): files committed, output not yet released
   crash_armed = 0;

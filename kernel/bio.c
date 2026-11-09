@@ -33,12 +33,15 @@ struct {
   struct buf head;
 } bcache;
 
+static void pcache_init(void);
+
 void
 binit(void)
 {
   struct buf *b;
 
   initlock(&bcache.lock, "bcache");
+  pcache_init();
 
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
@@ -88,26 +91,15 @@ bget(uint dev, uint blockno)
   panic("bget: no buffers");
 }
 
-// Return a locked buf with the contents of the indicated block.
-// A speculative process that already has a shadow for this block
-// gets the shadow's data instead of reading from the real disk.
+// Return a locked buf with the contents of the indicated block, straight
+// from the shared cache and the disk.  Never redirected to a shadow: the log
+// and the commit of a speculation use this, whoever is running them.
 struct buf *
-bread(uint dev, uint blockno)
+bread_raw(uint dev, uint blockno)
 {
   struct buf *b;
-  struct proc *p = myproc();
 
   b = bget(dev, blockno);
-
-  if (p != 0 && p->spec != 0) {
-    struct shadow *s = shadow_find(p->spec, dev, blockno);
-    if (s != 0) {
-      memmove(b->data, s->data, BSIZE);
-      b->valid = 1;
-      return b;
-    }
-  }
-
   if (!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
@@ -115,13 +107,109 @@ bread(uint dev, uint blockno)
   return b;
 }
 
+// ---- Private buffers for speculative processes ----
+//
+// Invariant: a speculative process never gets, and so never modifies, a
+// buffer of the shared cache; and nobody else ever sees a speculative
+// change.  xv6 code does bread(); edit bp->data; log_write(bp); brelse(bp),
+// so the edit would land in the shared cache before log_write() could
+// redirect it.  Instead bread() by a speculative process returns one of
+// these private bufs, filled from that speculation's shadow of the block if
+// it has one and from the real block otherwise.
+//
+// A private buf is keyed by (spec, dev, blockno) and has its own sleeplock,
+// so the members of one speculation exclude each other on a block exactly as
+// they would on a cache buffer (balloc and ialloc rely on that).  It lives
+// only while somebody holds it: log_write() copies the data into the shadow
+// (shadow.c), and when the last holder calls brelse() the entry is free
+// again.  So a block that is only READ never takes a shadow slot; a slot is
+// kept only for blocks that were written (log_write()).
+#define NPRIVBUF 64
+static struct {
+  struct spinlock lock;
+  struct buf buf[NPRIVBUF];
+} pcache;
+
+static void
+pcache_init(void)
+{
+  initlock(&pcache.lock, "pcache");
+  for (int i = 0; i < NPRIVBUF; i++)
+    initsleeplock(&pcache.buf[i].lock, "pbuf");
+}
+
+static struct buf *
+pbread(int spec, uint dev, uint blockno)
+{
+  struct buf *b, *e = pcache.buf + NPRIVBUF;
+
+  acquire(&pcache.lock);
+  for (;;) {
+    for (b = pcache.buf; b < e; b++) {
+      if (b->refcnt > 0 && b->spec == spec && b->dev == dev &&
+          b->blockno == blockno) {
+        b->refcnt++;
+        release(&pcache.lock);
+        acquiresleep(&b->lock);
+        return b;
+      }
+    }
+    for (b = pcache.buf; b < e; b++) {
+      if (b->refcnt == 0) {
+        b->spec = spec;
+        b->dev = dev;
+        b->blockno = blockno;
+        b->refcnt = 1;
+        // refcnt 0 means every earlier holder has released the sleeplock,
+        // so this cannot block while we hold the spinlock.
+        acquiresleep(&b->lock);
+        release(&pcache.lock);
+        // Fill while holding the sleeplock: later holders wait for it.
+        if (!shadow_read(spec, dev, blockno, (char *)b->data)) {
+          struct buf *r = bread_raw(dev, blockno);
+          memmove(b->data, r->data, BSIZE);
+          brelse(r);
+        }
+        b->valid = 1;
+        return b;
+      }
+    }
+    // All private buffers are in use (each holder needs only a few).
+    release(&pcache.lock);
+    yield();
+    acquire(&pcache.lock);
+  }
+}
+
+static void
+pbrelse(struct buf *b)
+{
+  releasesleep(&b->lock);
+  acquire(&pcache.lock);
+  if (--b->refcnt == 0)
+    b->spec = 0;
+  release(&pcache.lock);
+}
+
+// Return a locked buf with the contents of the indicated block.  A
+// speculative process gets a private buf (see above).
+struct buf *
+bread(uint dev, uint blockno)
+{
+  struct proc *p = myproc();
+
+  if (p != 0 && p->spec != 0)
+    return pbread(p->spec, dev, blockno);
+  return bread_raw(dev, blockno);
+}
+
 // Write b's contents to disk.  Must be locked.
 // Only the log calls bwrite.
 void
 bwrite(struct buf *b)
 {
-  if (!holdingsleep(&b->lock))
-    panic("bwrite");
+  if (!holdingsleep(&b->lock) || b->spec != 0)
+    panic("bwrite"); // private buffers are never written to disk
   virtio_disk_rw(b, 1);
 }
 
@@ -132,6 +220,10 @@ brelse(struct buf *b)
 {
   if (!holdingsleep(&b->lock))
     panic("brelse");
+  if (b->spec != 0) { // private buffer of a speculation
+    pbrelse(b);
+    return;
+  }
 
   releasesleep(&b->lock);
 

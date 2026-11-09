@@ -18,6 +18,7 @@ void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
+struct buf*     bread_raw(uint, uint);
 
 // console.c
 void            consoleinit(void);
@@ -81,6 +82,8 @@ struct shadow*  shadow_alloc(int, uint, uint, struct buf*);
 void            shadow_free_all(int);
 int             shadow_count(int);
 int             shadow_get(int, int, uint*, uint*, char**);
+int             shadow_read(int, uint, uint, char*);
+int             shadow_put(int, uint, uint, char*);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);

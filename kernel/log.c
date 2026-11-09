@@ -6,7 +6,6 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
-#include "proc.h"
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -80,8 +79,8 @@ install_trans(int recovering)
     if (recovering) {
       printk("recovering tail %d dst %d\n", tail, log.lh.block[tail]);
     }
-    struct buf *lbuf = bread(log.dev, log.start + tail + 1); // read log block
-    struct buf *dbuf = bread(log.dev, log.lh.block[tail]);   // read dst
+    struct buf *lbuf = bread_raw(log.dev, log.start + tail + 1); // read log block
+    struct buf *dbuf = bread_raw(log.dev, log.lh.block[tail]);   // read dst
     memmove(dbuf->data, lbuf->data, BSIZE); // copy block to dst
     bwrite(dbuf);                           // write dst to disk
     if (recovering == 0)
@@ -97,7 +96,7 @@ install_trans(int recovering)
 static void
 read_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
+  struct buf *buf = bread_raw(log.dev, log.start);
   struct logheader *lh = (struct logheader *)(buf->data);
   int i;
   log.lh.n = lh->n;
@@ -113,7 +112,7 @@ read_head(void)
 static void
 write_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
+  struct buf *buf = bread_raw(log.dev, log.start);
   struct logheader *hb = (struct logheader *)(buf->data);
   int i;
   hb->n = log.lh.n;
@@ -224,8 +223,8 @@ write_log(void)
   int tail;
 
   for (tail = 0; tail < log.lh.n; tail++) {
-    struct buf *to = bread(log.dev, log.start + tail + 1); // log block
-    struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
+    struct buf *to = bread_raw(log.dev, log.start + tail + 1); // log block
+    struct buf *from = bread_raw(log.dev, log.lh.block[tail]); // cache block
     memmove(to->data, from->data, BSIZE);
     bwrite(to); // write the log
     brelse(from);
@@ -261,23 +260,13 @@ commit()
 int
 log_write(struct buf *b)
 {
-  struct proc *p = myproc();
-
-  // A write from a speculative process goes to its shadow and is
-  // never staged into the real log.
-  if (p != 0 && p->spec != 0) {
-    struct shadow *s = shadow_find(p->spec, b->dev, b->blockno);
-    if (s == 0) {
-      // No shadow yet: allocate one and copy the current block
-      // contents in first. Fail if the table is full; never fall
-      // back to the real disk.
-      s = shadow_alloc(p->spec, b->dev, b->blockno, b);
-      if (s == 0)
-        return -1;
-    }
-    memmove(s->data, b->data, BSIZE);
-    return 0;
-  }
+  // A private buffer belongs to a speculation (bio.c): its data goes into
+  // that speculation's shadow of the block and is never staged into the real
+  // log.  Which path is taken depends on the buffer, not on who is running,
+  // so a speculative process that happens to run the log's own commit still
+  // gets the real thing.
+  if (b->spec != 0)
+    return shadow_put(b->spec, b->dev, b->blockno, (char *)b->data);
 
   int i;
 
