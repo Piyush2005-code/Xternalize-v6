@@ -296,18 +296,30 @@ idup(struct inode *ip)
 
 // Lock the given inode.
 // Reads the inode from disk if necessary.
+//
+// The in-memory inode is shared by every process, so it must not carry one
+// speculation's changes (a longer size, new block addresses, a new type)
+// over to a process that is not in it, or past an xabort.  Each cached inode
+// therefore remembers the view of the disk it was read in (ip->view: the
+// speculation id, 0 for the real disk) and is read again whenever the process
+// locking it is in a different view.  Every change is written back with
+// iupdate() before the unlock, into the shadow for a speculative process, so
+// nothing is lost by re-reading.  Processes outside any speculation never
+// take the extra path.
 void
 ilock(struct inode *ip)
 {
   struct buf *bp;
   struct dinode *dip;
+  int view = myproc() ? myproc()->spec : 0;
 
   if (ip == 0 || ip->ref < 1)
     panic("ilock");
 
   acquiresleep(&ip->lock);
 
-  if (ip->valid == 0) {
+  if (ip->valid == 0 || ip->view != view) {
+    int fresh = ip->valid == 0;
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     dip = (struct dinode *)bp->data + ip->inum % IPB;
     ip->type = dip->type;
@@ -320,7 +332,11 @@ ilock(struct inode *ip)
     ip->mode = dip->mode;
     brelse(bp);
     ip->valid = 1;
-    if (ip->type == 0)
+    ip->view = view;
+    // type 0 after a view change means the inode does not exist in this
+    // view (e.g. created inside a speculation that was aborted): callers
+    // that hold it open (file.c) check ip->type.
+    if (ip->type == 0 && fresh)
       panic("ilock: no type");
   }
 }
@@ -373,6 +389,11 @@ iput(struct inode *ip)
   // Last reference of an unlinked inode?  Capture dev/inum before ref--,
   // since once ref hits 0, ip may be recycled by a concurrent iget()
   // for a different inum.
+  int view = myproc() ? myproc()->spec : 0;
+  // In-core fields read in another view (see ilock) say nothing about this
+  // one: do not free by them; just forget them with the last reference.
+  if (ip->ref == 1 && ip->valid && ip->view != view)
+    ip->valid = 0;
   int last = (ip->ref == 1 && ip->valid && ip->nlink == 0);
   uint dev = ip->dev, inum = ip->inum;
 

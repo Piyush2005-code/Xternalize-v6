@@ -20,6 +20,8 @@ struct inode {
   int ref;               // Reference count
   struct sleeplock lock; // protects everything below here
   int valid;             // inode has been read from disk?
+  int view;              // speculation whose view of the disk the fields below
+                         // were read in (0: the real disk); see ilock()
 
   short type; // copy of disk inode
   short major;
