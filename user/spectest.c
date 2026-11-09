@@ -643,6 +643,77 @@ test_read_own_writes(void)
   unlink("/sc_b");
 }
 
+// A write to a block that changed outside the speculation must abort with
+// -2, leaving the outside writer's bytes intact.
+static void
+test_write_conflict(void)
+{
+  int id, st;
+
+  put("/sc_conflict", "base");
+  id = open_spec();
+  if (fork() == 0) {
+    int fd;
+    if (xjoin(id) < 0)
+      exit(2);
+    fd = open("/sc_conflict", O_WRONLY);
+    if (fd < 0 || write(fd, "spec", 4) != 4)
+      exit(3);
+    close(fd);
+    exit(0);
+  }
+  wait(&st);
+  put("/sc_conflict", "real");
+  if (fork() == 0) {
+    if (xjoin(id) < 0)
+      exit(2);
+    exit(xcommit() == -2 ? 0 : 1);
+  }
+  wait(&st);
+  check("xcommit detects an outside write to a shadowed block (-2)", st == 0);
+  check("a conflicting commit preserves the outside writer's data",
+        holds("/sc_conflict", "real"));
+  unlink("/sc_conflict");
+}
+
+// Repeated writes by the same speculation retain their original base version;
+// an unrelated file write does not conflict.
+static void
+test_nonconflicting_commit(void)
+{
+  int id, st;
+
+  put("/sc_left", "left");
+  put("/sc_right", "right");
+  id = open_spec();
+  if (fork() == 0) {
+    int fd;
+    if (xjoin(id) < 0)
+      exit(2);
+    fd = open("/sc_left", O_WRONLY);
+    if (fd < 0 || write(fd, "spec", 4) != 4 ||
+        write(fd, "done", 4) != 4)
+      exit(3);
+    close(fd);
+    exit(0);
+  }
+  wait(&st);
+  put("/sc_right", "kept!");
+  if (fork() == 0) {
+    if (xjoin(id) < 0)
+      exit(2);
+    exit(xcommit() == 0 ? 0 : 1);
+  }
+  wait(&st);
+  check("xcommit accepts writes to blocks unchanged outside", st == 0);
+  check("a nonconflicting commit installs the speculative data",
+        holds("/sc_left", "done"));
+  check("the outside writer's unrelated file remains intact",
+        holds("/sc_right", "kept!"));
+  unlink("/sc_left");
+  unlink("/sc_right");
+}
+
 // Writing past what the shadow table can hold fails with -1, nothing
 // reaches the disk, and what was written before still commits cleanly.
 static void
@@ -822,6 +893,8 @@ main(int argc, char **argv)
   test_files(0);
   test_files(1);
   test_read_own_writes();
+  test_write_conflict();
+  test_nonconflicting_commit();
   test_isolation(0);
   test_isolation(1);
   test_read_takes_no_slot();
