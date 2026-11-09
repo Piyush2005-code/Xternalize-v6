@@ -72,6 +72,7 @@ shadow_alloc(int spec, uint dev, uint blockno, struct buf *b)
       stable.shadows[i].spec = spec;
       stable.shadows[i].dev = dev;
       stable.shadows[i].blockno = blockno;
+      stable.shadows[i].version = b->version;
       memmove(stable.shadows[i].data, b->data, BSIZE);
       s = &stable.shadows[i];
       break;
@@ -113,7 +114,8 @@ shadow_count(int spec)
 // i+1 shadows.  This is the iterator xcommit uses to walk a speculation's
 // blocks; shadow_count() says how many to expect.
 int
-shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
+shadow_get(int spec, int i, uint *dev, uint *blockno, char **data,
+           uint *version)
 {
   int ret = -1;
 
@@ -126,6 +128,7 @@ shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
       *dev = s->dev;
       *blockno = s->blockno;
       *data = s->data;
+      *version = s->version;
       ret = 0;
       break;
     }
@@ -139,7 +142,7 @@ shadow_get(int spec, int i, uint *dev, uint *blockno, char **data)
 // pointer that outlives the lock; readers that can race with an abort use
 // this instead.)
 int
-shadow_read(int spec, uint dev, uint blockno, char *dst)
+shadow_read(int spec, uint dev, uint blockno, char *dst, uint *version)
 {
   int found = 0;
 
@@ -148,6 +151,7 @@ shadow_read(int spec, uint dev, uint blockno, char *dst)
     if (stable.shadows[i].spec == spec && stable.shadows[i].dev == dev &&
         stable.shadows[i].blockno == blockno) {
       memmove(dst, stable.shadows[i].data, BSIZE);
+      *version = stable.shadows[i].version;
       found = 1;
       break;
     }
@@ -161,7 +165,7 @@ shadow_read(int spec, uint dev, uint blockno, char *dst)
 // (nothing is stored then, and the speculation is marked failed).  This is what log_write() does for a private
 // buffer.
 int
-shadow_put(int spec, uint dev, uint blockno, char *src)
+shadow_put(int spec, uint dev, uint blockno, char *src, uint version)
 {
   struct shadow *free = 0;
   int ret = -1;
@@ -181,6 +185,8 @@ shadow_put(int spec, uint dev, uint blockno, char *src)
       free = s;
   }
   if (free != 0) {
+    if (free->spec == 0) // preserve the original base on later writes
+      free->version = version;
     free->spec = spec;
     free->dev = dev;
     free->blockno = blockno;
