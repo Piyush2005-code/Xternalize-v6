@@ -55,11 +55,18 @@ crash_point(void)
 }
 
 // Write every shadow of speculation id to disk in one transaction.
-// Returns 0, or -1 if the speculation holds more blocks than one
-// transaction can (nothing is written then).
+// Returns 0, -1 if the speculation holds more blocks than one transaction
+// can, or -2 if an outside write changed one of its shadowed blocks.
 int
 spec_commit_files(int id)
 {
+  struct shadowent {
+    uint dev;
+    uint blockno;
+    uint version;
+    char *data;
+    struct buf *bp;
+  } ents[MAXSHADOWBLOCKS];
   int n = shadow_count(id);
 
   // The table was just read under its lock, so any refused write of a
@@ -69,20 +76,50 @@ spec_commit_files(int id)
 
   crash_armed = 1;
   if (n > 0) {
-    begin_op_n(n);
+    // Snapshot the table and sort by block address. Every commit takes locks
+    // in this order, preventing two overlapping commits from deadlocking.
     for (int i = 0; i < n; i++) {
-      uint dev, blockno;
-      char *data;
-      struct buf *bp;
-
-      if (shadow_get(id, i, &dev, &blockno, &data) < 0)
+      if (shadow_get(id, i, &ents[i].dev, &ents[i].blockno, &ents[i].data,
+                     &ents[i].version) < 0)
         panic("spec_commit_files: shadow vanished");
-      bp = bread_raw(dev, blockno); // the real block, not a private copy
-      memmove(bp->data, data, BSIZE);
-      log_write(bp);
-      brelse(bp);
+      ents[i].bp = 0;
+    }
+    for (int i = 1; i < n; i++) {
+      struct shadowent key = ents[i];
+      int j = i - 1;
+      while (j >= 0 &&
+             (ents[j].dev > key.dev ||
+              (ents[j].dev == key.dev && ents[j].blockno > key.blockno))) {
+        ents[j + 1] = ents[j];
+        j--;
+      }
+      ents[j + 1] = key;
+    }
+
+    begin_op_n(n);
+    int conflict = 0;
+    for (int i = 0; i < n; i++) {
+      ents[i].bp = bread_raw(ents[i].dev, ents[i].blockno);
+      if (blockver_version(ents[i].dev, ents[i].blockno) !=
+          ents[i].version)
+        conflict = 1;
+    }
+    if (conflict) {
+      for (int i = 0; i < n; i++)
+        brelse(ents[i].bp);
+      end_op_n(n); // no blocks were staged, so this transaction is empty
+      crash_armed = 0;
+      return -2;
+    }
+
+    for (int i = 0; i < n; i++) {
+      memmove(ents[i].bp->data, ents[i].data, BSIZE);
+      if (log_write(ents[i].bp) < 0)
+        panic("spec_commit_files: real log refused shadow");
       crash_point(); // crashat(): after staging a shadow block
     }
+    for (int i = 0; i < n; i++)
+      brelse(ents[i].bp);
     end_op_n(n); // the transaction commits here
   }
   crash_point(); // crashat(): files committed, output not yet released
