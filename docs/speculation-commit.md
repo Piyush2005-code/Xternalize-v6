@@ -108,9 +108,13 @@ prints the table. Observed, CPUS=1 and 3 alike: points 1-5 old, 6-11 new,
 
 ## Limits
 
-* **No conflict rule.** Two speculations that write the same block each commit
-  their whole shadow; the later commit silently wins. The handout says to drop
-  this first when behind, and we did.
+* **Write-write conflict rule (`CONFLICT_RULE 1`).** Real `log_write()` calls
+  advance a per-block version. A speculative private buffer saves the version
+  it read; `xcommit` locks every written block in address order and compares
+  the saved versions before staging anything. A mismatch drops the speculation
+  and returns `-2`, preserving the outside writer's data. Reads alone are not
+  tracked, so this is write-write detection rather than serializable
+  validation. `CONFLICT_RULE 2` is reserved for a future read-set rule.
 * **No rollback of process memory.** `xabort` discards file and output effects
   only; a process keeps its variables, its open file descriptors, its pid.
 * **Held output lost on a crash before `end_op()`** is correct, as above.
@@ -183,9 +187,9 @@ Remaining limits of this layer:
   does not wait for in-flight member operations).
 * A file descriptor to a file created inside an aborted speculation stays open
   but every use returns -1; `xabort` does not close descriptors.
-* Whole-block shadows: an outside process that changes a block (bitmap, inode
-  block, directory block) while a speculation holds a shadow of it is
-  overwritten at commit (the conflict rule, above).
+* Whole-block shadows: the rule detects changes to blocks the speculation
+  writes, including bitmap and inode blocks. Directory metadata can still
+  produce false conflicts because unrelated names may share a directory block.
 
 ## Cost
 
@@ -211,7 +215,8 @@ per KB falls as the speculation grows. The cliff is at 64 KB: the shadow table (
   output arriving only after the files changed, read-your-own-writes,
   exhaustion (write -1, mkdir -1, xcommit -1), isolation (old size, data and
   directory outside; create+unlink inside; abort leaves the cache intact),
-  read-takes-no-slot, and the commit/abort error paths. (With no shadow
+  read-takes-no-slot, conflict detection and unrelated-write commit, and the
+  commit/abort error paths. (With no shadow
   table the file cases print `SKIP`.)
 * `scripts/tests/test_spec_crash.py`: the crash-point table above.
 * `scripts/bench_spec_cost.py`: write cost inside and outside a speculation.
