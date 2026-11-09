@@ -162,6 +162,7 @@ UPROGS=\
 	$U/_xcommit\
 	$U/_xabort\
 	$U/_spectest\
+	$U/_speccost\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
