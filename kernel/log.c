@@ -285,11 +285,17 @@ log_write(struct buf *b)
   // so a speculative process that happens to run the log's own commit still
   // gets the real thing.
   if (b->spec != 0) {
-    int r = shadow_put(b->spec, b->dev, b->blockno, (char *)b->data);
+    int r = shadow_put(b->spec, b->dev, b->blockno, (char *)b->data,
+                       b->version);
     if (r < 0 && myproc() != 0)
       myproc()->fsfail = 1; // for op_failed(), when a caller cannot pass -1 up
     return r;
   }
+
+  // The caller holds this block's sleeplock. Record real writes here so a
+  // concurrent speculative commit sees even an outsider transaction that
+  // has staged its change but has not reached end_op() yet.
+  blockver_touch(b->dev, b->blockno);
 
   int i;
 
