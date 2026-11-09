@@ -25,6 +25,7 @@ main()
     plicinit();         // set up interrupt controller
     plicinithart();     // ask PLIC for device interrupts
     binit();            // buffer cache
+    shadow_init();      // speculative shadow table
     iinit();            // inode table
     fileinit();         // file table
     spec_init();        // speculation table

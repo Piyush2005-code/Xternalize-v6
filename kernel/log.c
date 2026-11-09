@@ -6,6 +6,7 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
+#include "proc.h"
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -255,9 +256,29 @@ commit()
 //   modify bp->data[]
 //   log_write(bp)
 //   brelse(bp)
-void
+//
+// Returns 0 on success, -1 on failure.
+int
 log_write(struct buf *b)
 {
+  struct proc *p = myproc();
+
+  // A write from a speculative process goes to its shadow and is
+  // never staged into the real log.
+  if (p != 0 && p->spec != 0) {
+    struct shadow *s = shadow_find(p->spec, b->dev, b->blockno);
+    if (s == 0) {
+      // No shadow yet: allocate one and copy the current block
+      // contents in first. Fail if the table is full; never fall
+      // back to the real disk.
+      s = shadow_alloc(p->spec, b->dev, b->blockno, b);
+      if (s == 0)
+        return -1;
+    }
+    memmove(s->data, b->data, BSIZE);
+    return 0;
+  }
+
   int i;
 
   acquire(&log.lock);
@@ -276,6 +297,7 @@ log_write(struct buf *b)
     log.lh.n++;
   }
   release(&log.lock);
+  return 0;
 }
 
 uint64

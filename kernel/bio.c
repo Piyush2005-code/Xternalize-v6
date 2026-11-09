@@ -21,6 +21,7 @@
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
+#include "proc.h"
 
 struct {
   struct spinlock lock;
@@ -88,12 +89,25 @@ bget(uint dev, uint blockno)
 }
 
 // Return a locked buf with the contents of the indicated block.
+// A speculative process that already has a shadow for this block
+// gets the shadow's data instead of reading from the real disk.
 struct buf *
 bread(uint dev, uint blockno)
 {
   struct buf *b;
+  struct proc *p = myproc();
 
   b = bget(dev, blockno);
+
+  if (p != 0 && p->spec != 0) {
+    struct shadow *s = shadow_find(p->spec, dev, blockno);
+    if (s != 0) {
+      memmove(b->data, s->data, BSIZE);
+      b->valid = 1;
+      return b;
+    }
+  }
+
   if (!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
