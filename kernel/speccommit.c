@@ -20,10 +20,7 @@
 //   write_head, the point just after it, one point per installed block,
 //   and the point just after end_op() returns (before any output).
 //
-// The shadow table itself is not here.  The weak functions below are
-// TEMPORARY stand-ins until Heril's shadow table is merged; his real
-// definitions replace them at link time.  They make every speculation
-// look like it has no shadows, so file changes are not held.
+// The shadow table itself is in shadow.c.
 
 #include "types.h"
 #include "param.h"
@@ -35,44 +32,9 @@
 #include "buf.h"
 #include "defs.h"
 
-struct shadow;
-
 // One xcommit is one transaction, so the shadow table must fit in it.
-#ifdef MAXSHADOWBLOCKS
 _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
                "MAXSHADOWBLOCKS must fit in one log transaction");
-#endif
-
-// TEMP until Heril's PR merges: his shadow.c defines these, same names and
-// signatures (shadow_get(), the iterator, is real now and has no stub).
-struct shadow *shadow_find(int, uint, uint) __attribute__((weak));
-struct shadow *shadow_alloc(int, uint, uint, struct buf *)
-  __attribute__((weak));
-void shadow_free_all(int) __attribute__((weak));
-int shadow_count(int) __attribute__((weak));
-
-struct shadow *
-shadow_find(int spec, uint dev, uint blockno)
-{
-  return 0;
-}
-
-struct shadow *
-shadow_alloc(int spec, uint dev, uint blockno, struct buf *b)
-{
-  return 0;
-}
-
-void
-shadow_free_all(int spec)
-{
-}
-
-int
-shadow_count(int spec)
-{
-  return 0;
-}
 
 static int crash_left;  // panic at this crash point; 0 = off
 static int crash_armed; // inside spec_commit_files
