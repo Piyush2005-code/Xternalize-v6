@@ -32,6 +32,10 @@
 
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
+_Static_assert(LOGBLOCKS == SPECBLOCKS + 2 * MAXOPBLOCKS &&
+                 NBUF == LOGBLOCKS + MAXOPBLOCKS,
+               "param.h: LOGBLOCKS = SPECBLOCKS + 20, NBUF = LOGBLOCKS + 10");
+
 struct logheader {
   int n;
   int block[LOGBLOCKS];
@@ -41,6 +45,8 @@ struct log {
   struct spinlock lock;
   int start;
   int outstanding; // how many FS sys calls are executing.
+  int reserved;    // log blocks reserved by those calls (see begin_op_n).
+  int bigwait;     // calls waiting for a large reservation (see begin_op_n).
   int committing;  // in commit(), please wait.
   int dev;
   int ncommit;
@@ -81,6 +87,8 @@ install_trans(int recovering)
       bunpin(dbuf);
     brelse(lbuf);
     brelse(dbuf);
+    if (recovering == 0)
+      crash_point(); // crashat(): during install_trans
   }
 }
 
@@ -128,21 +136,39 @@ recover_from_log(void)
 void
 begin_op(void)
 {
+  begin_op_n(MAXOPBLOCKS);
+}
+
+// Like begin_op(), but reserve room for n logged blocks instead of
+// MAXOPBLOCKS.  A speculation's xcommit uses it to write all its shadow
+// blocks in one transaction (kernel/speccommit.c).  Pair it with
+// end_op_n(n).  A call that needs more than MAXOPBLOCKS goes first: while
+// one waits, ordinary calls wait too, so it cannot be starved.
+void
+begin_op_n(int n)
+{
+  int big = n > MAXOPBLOCKS;
+
+  if (n > LOGBLOCKS)
+    panic("begin_op_n: too big");
   acquire(&log.lock);
+  if (big)
+    log.bigwait++;
   while (1) {
-    if (log.committing) {
-      sleep_prepare(&log);
-      release(&log.lock);
-      sleep();
-      acquire(&log.lock);
-    } else if (log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS > LOGBLOCKS) {
-      // this op might exhaust log space; wait for commit.
+    if (log.committing || (!big && log.bigwait > 0) ||
+        log.lh.n + log.reserved + n > LOGBLOCKS) {
+      // committing, or this op might exhaust log space: wait.
       sleep_prepare(&log);
       release(&log.lock);
       sleep();
       acquire(&log.lock);
     } else {
       log.outstanding += 1;
+      log.reserved += n;
+      if (big) {
+        log.bigwait--;
+        wakeup(&log); // ordinary calls may proceed if nobody else waits
+      }
       release(&log.lock);
       break;
     }
@@ -154,10 +180,17 @@ begin_op(void)
 void
 end_op(void)
 {
+  end_op_n(MAXOPBLOCKS);
+}
+
+void
+end_op_n(int n)
+{
   int do_commit = 0;
 
   acquire(&log.lock);
   log.outstanding -= 1;
+  log.reserved -= n;
   if (log.committing)
     panic("log.committing");
   if (log.outstanding == 0) {
@@ -204,7 +237,9 @@ commit()
 {
   if (log.lh.n > 0) {
     write_log();      // Write modified blocks from cache to log
+    crash_point();    // crashat(): just before the commit point
     write_head();     // Write header to disk -- the real commit
+    crash_point();    // crashat(): just after the commit point
     install_trans(0); // Now install writes to home locations
     log.lh.n = 0;
     write_head(); // Erase the transaction from the log

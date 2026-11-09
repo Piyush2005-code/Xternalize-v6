@@ -78,6 +78,7 @@ static void
 discard_slot(struct spec *s, int id)
 {
   proc_leave_spec(id);
+  spec_discard_files(id);
   for (int i = 0; i < s->nheld; i++)
     if (s->held[i].pipe)
       pipe_unhold(s->held[i].pipe);
@@ -225,6 +226,7 @@ spec_end(int commit)
 {
   struct proc *p = myproc();
   int id = p->spec;
+  int commit_requested = commit;
   struct spec *s;
 
   acquire(&spec_lock);
@@ -236,7 +238,16 @@ spec_end(int commit)
   s->ending = 1;
   release(&spec_lock);
 
+  // Commit order (docs/speculation-commit.md): the file changes go to disk
+  // in one log transaction first, and only after end_op() has returned do
+  // the members leave and the held output come out.  A crash before that
+  // leaves no output behind for changes that did not happen.  If the
+  // changes cannot be applied the speculation is dropped instead.
+  if (commit && spec_commit_files(id) < 0)
+    commit = 0;
+
   proc_leave_spec(id);
+  spec_discard_files(id); // the shadows are on disk now (or dropped)
 
   for (int i = 0; i < s->nheld; i++) {
     if (commit)
@@ -248,7 +259,23 @@ spec_end(int commit)
   acquire(&spec_lock);
   s->id = 0;
   release(&spec_lock);
-  return 0;
+  return commit == commit_requested ? 0 : -1;
+}
+
+// May a member of speculation id still add to its shadows?  Not once the
+// speculation is ending (commit in progress or abort): the shadow layer's
+// log_write() must return -1 then (docs/speculation-commit.md).
+int
+spec_can_shadow(int id)
+{
+  struct spec *s;
+  int ok;
+
+  acquire(&spec_lock);
+  s = lookup(id);
+  ok = s != 0 && !s->ending;
+  release(&spec_lock);
+  return ok;
 }
 
 // Hold n bytes that the calling (speculative) process is writing to pipe

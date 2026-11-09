@@ -25,6 +25,7 @@ OBJS = \
   $K/file.o \
   $K/pipe.o \
   $K/spec.o \
+  $K/speccommit.o \
   $K/exec.o \
   $K/sysfile.o \
   $K/kernelvec.o \
@@ -161,6 +162,7 @@ UPROGS=\
 	$U/_xcommit\
 	$U/_xabort\
 	$U/_spectest\
+	$U/_speccost\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
@@ -246,6 +248,12 @@ test-perm:
 .PHONY: test-spec
 test-spec:
 	python3 scripts/tests/test_spec_e2e.py
+
+# Crash during xcommit: crashat(n) at every crash point, reboot on the same
+# fs.img, file must be wholly old or new (scripts/tests/test_spec_crash.py).
+.PHONY: test-crash
+test-crash:
+	python3 scripts/tests/test_spec_crash.py
 
 .PHONY: fmt
 fmt:
