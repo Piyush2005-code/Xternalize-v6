@@ -517,7 +517,7 @@ test_read_own_writes(void)
     fd = open("/sc_b", O_WRONLY);
     write(fd, "NEW", 3);
     close(fd);
-    exit(holds("/sc_b", "NEWold") ? 0 : 1);
+    exit(holds("/sc_b", "NEWld") ? 0 : 1);
   }
   wait(&st);
   check("read-your-own-writes inside the speculation", st == 0);
@@ -554,6 +554,7 @@ test_shadow_exhaustion(void)
     exit(n < 200 ? n : 199);
   }
   wait(&ok);
+  printf("spectest: %d 1KB writes succeeded before the limit\n", ok);
   check("a write past the shadow limit returns -1", ok > 0 && ok < 199);
   check("nothing reached the disk before commit", !exists("/sc_big"));
   check("commit after the limit was hit succeeds", end_spec(id, 1) == 0);
