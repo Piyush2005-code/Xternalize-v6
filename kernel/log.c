@@ -6,6 +6,7 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
+#include "proc.h"
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -151,6 +152,8 @@ begin_op_n(int n)
 
   if (n > LOGBLOCKS)
     panic("begin_op_n: too big");
+  if (myproc() != 0)
+    myproc()->fsfail = 0;
   acquire(&log.lock);
   if (big)
     log.bigwait++;
@@ -173,6 +176,21 @@ begin_op_n(int n)
       break;
     }
   }
+}
+
+// Was any write of this process's current operation (since its begin_op())
+// refused by log_write()?  Reads and clears the flag.  fs.c passes -1 up
+// wherever it can; the few callers that cannot (iput() freeing an inode,
+// say) leave it to the system call to ask this after end_op().
+int
+op_failed(void)
+{
+  struct proc *p = myproc();
+  int r = p != 0 && p->fsfail;
+
+  if (p != 0)
+    p->fsfail = 0;
+  return r;
 }
 
 // called at the end of each FS system call.
@@ -265,8 +283,12 @@ log_write(struct buf *b)
   // log.  Which path is taken depends on the buffer, not on who is running,
   // so a speculative process that happens to run the log's own commit still
   // gets the real thing.
-  if (b->spec != 0)
-    return shadow_put(b->spec, b->dev, b->blockno, (char *)b->data);
+  if (b->spec != 0) {
+    int r = shadow_put(b->spec, b->dev, b->blockno, (char *)b->data);
+    if (r < 0 && myproc() != 0)
+      myproc()->fsfail = 1; // for op_failed(), when a caller cannot pass -1 up
+    return r;
+  }
 
   int i;
 

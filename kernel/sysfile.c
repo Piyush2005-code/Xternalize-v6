@@ -149,7 +149,12 @@ sys_link(void)
   }
 
   ip->nlink++;
-  iupdate(ip);
+  if (iupdate(ip) < 0) {
+    ip->nlink--;
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
   iunlock(ip);
 
   if ((dp = nameiparent(new, name)) == 0)
@@ -175,7 +180,7 @@ sys_link(void)
 
   end_op();
 
-  return 0;
+  return op_failed() ? -1 : 0;
 
 bad:
   ilock(ip);
@@ -243,8 +248,11 @@ sys_unlink(void)
   }
 
   memset(&de, 0, sizeof(de));
-  if (writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
-    panic("unlink: writei");
+  if (writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de)) {
+    // Not a panic: a speculation's shadow table can be full.
+    iunlockput(ip);
+    goto bad;
+  }
   if (ip->type == T_DIR) {
     dp->nlink--;
     iupdate(dp);
@@ -257,7 +265,7 @@ sys_unlink(void)
 
   end_op();
 
-  return 0;
+  return op_failed() ? -1 : 0;
 
 bad:
   iunlockput(dp);
@@ -407,12 +415,23 @@ sys_open(void)
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
   if ((omode & O_TRUNC) && ip->type == T_FILE) {
-    itrunc(ip);
+    if (itrunc(ip) < 0) { // the truncate could not be written: undo the open
+      myproc()->ofile[fd] = 0;
+      iunlock(ip);
+      end_op();
+      fileclose(f); // runs its own operation
+      return -1;
+    }
   }
 
   iunlock(ip);
   end_op();
 
+  if (op_failed()) { // create() ignored a refused write somewhere
+    myproc()->ofile[fd] = 0;
+    fileclose(f);
+    return -1;
+  }
   return fd;
 }
 
@@ -429,7 +448,7 @@ sys_mkdir(void)
   }
   iunlockput(ip);
   end_op();
-  return 0;
+  return op_failed() ? -1 : 0;
 }
 
 uint64
@@ -449,7 +468,7 @@ sys_mknod(void)
   }
   iunlockput(ip);
   end_op();
-  return 0;
+  return op_failed() ? -1 : 0;
 }
 
 uint64
