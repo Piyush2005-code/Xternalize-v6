@@ -30,3 +30,4 @@
 #define SYS_xcommit 27
 #define SYS_xabort  28
 #define SYS_setsid  29
+#define SYS_crashat 30

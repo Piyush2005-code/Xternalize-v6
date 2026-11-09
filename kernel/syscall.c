@@ -110,6 +110,7 @@ extern uint64 sys_xjoin(void);
 extern uint64 sys_xcommit(void);
 extern uint64 sys_xabort(void);
 extern uint64 sys_setsid(void);
+extern uint64 sys_crashat(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -144,6 +145,7 @@ static uint64 (*syscalls[])(void) = {
   [SYS_xcommit] = sys_xcommit,
   [SYS_xabort]  = sys_xabort,
   [SYS_setsid]  = sys_setsid,
+  [SYS_crashat] = sys_crashat,
   // clang-format on
 };
 
@@ -182,6 +184,7 @@ static int syscall_privileges[] = {
   [SYS_xcommit] = PRIV_USER,
   [SYS_xabort]  = PRIV_USER,
   [SYS_setsid]  = PRIV_USER,
+  [SYS_crashat] = PRIV_ADMIN,
   // clang-format on
 };
 
