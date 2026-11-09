@@ -48,13 +48,25 @@ shadow_find(int spec, uint dev, uint blockno)
 }
 
 // Allocate a shadow for (spec, dev, blockno) and copy the current
-// contents of b into it. Returns 0 if the table is full.
+// contents of b into it. Returns 0 if the table is full, or if the
+// speculation is no longer open for writing (see below).
+//
+// "Open for writing" is the state spec.c already keeps: spec_can_shadow() is
+// false once xcommit/xabort has marked the speculation ending.  It is checked
+// with the table lock held, and spec_commit_files() reads the table after
+// the ending mark is set, so a member either gets its block in before the
+// commit counts the shadows or fails; nothing is added or changed
+// mid-commit.  Lock order: stable.lock, then spec_lock.
 struct shadow *
 shadow_alloc(int spec, uint dev, uint blockno, struct buf *b)
 {
   struct shadow *s = 0;
 
   acquire(&stable.lock);
+  if (!spec_can_shadow(spec)) { // committing or aborted: no new shadows
+    release(&stable.lock);
+    return 0;
+  }
   for (int i = 0; i < MAXSHADOWBLOCKS; i++) {
     if (stable.shadows[i].spec == 0) { // free slot
       stable.shadows[i].spec = spec;
@@ -155,6 +167,10 @@ shadow_put(int spec, uint dev, uint blockno, char *src)
   int ret = -1;
 
   acquire(&stable.lock);
+  if (!spec_can_shadow(spec)) { // committing or aborted: no new writes
+    release(&stable.lock);
+    return -1;
+  }
   for (int i = 0; i < MAXSHADOWBLOCKS; i++) {
     struct shadow *s = &stable.shadows[i];
     if (s->spec == spec && s->dev == dev && s->blockno == blockno) {
