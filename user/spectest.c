@@ -365,12 +365,6 @@ test_large_pipe_commit(void)
 
 static int have_shadows; // do file writes inside a speculation stay held?
 
-static void
-skip(char *name)
-{
-  printf("spectest: SKIP %s (needs shadow table)\n", name);
-}
-
 // Replace the contents of path with s.
 static void
 put(char *path, char *s)
@@ -821,24 +815,17 @@ main(int argc, char **argv)
   test_large_pipe_commit();
   test_commit_errors();
 
-  // File effects need the shadow table (Heril's PR); until it is merged
-  // these are reported as SKIP, not FAILED.
-  if (have_shadows) {
-    test_files(0);
-    test_files(1);
-    test_read_own_writes();
-    test_isolation(0);
-    test_isolation(1);
-    test_read_takes_no_slot();
-    test_shadow_exhaustion();
-  } else {
-    skip("files abort");
-    skip("files commit");
-    skip("read-your-own-writes");
-    skip("isolation");
-    skip("read takes no slot");
-    skip("shadow exhaustion");
-  }
+  // The shadow table is part of the kernel now, so a speculative file write
+  // that an outsider can see is a failure (isolation broken), not a SKIP.
+  check("speculative file writes are invisible outside (shadow probe)",
+        have_shadows);
+  test_files(0);
+  test_files(1);
+  test_read_own_writes();
+  test_isolation(0);
+  test_isolation(1);
+  test_read_takes_no_slot();
+  test_shadow_exhaustion();
 
   if (failures == 0)
     printf("spectest: all tests passed\n");
