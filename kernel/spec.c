@@ -230,6 +230,7 @@ spec_end(int commit)
   struct proc *p = myproc();
   int id = p->spec;
   int commit_requested = commit;
+  int commit_result = 0;
   struct spec *s;
 
   acquire(&spec_lock);
@@ -246,8 +247,11 @@ spec_end(int commit)
   // the members leave and the held output come out.  A crash before that
   // leaves no output behind for changes that did not happen.  If the
   // changes cannot be applied the speculation is dropped instead.
-  if (commit && spec_commit_files(id) < 0)
-    commit = 0;
+  if (commit) {
+    commit_result = spec_commit_files(id);
+    if (commit_result < 0)
+      commit = 0;
+  }
 
   proc_leave_spec(id);
   spec_discard_files(id); // the shadows are on disk now (or dropped)
@@ -262,6 +266,8 @@ spec_end(int commit)
   acquire(&spec_lock);
   s->id = 0;
   release(&spec_lock);
+  if (commit_requested && commit_result == -2)
+    return -2;
   return commit == commit_requested ? 0 : -1;
 }
 
