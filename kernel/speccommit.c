@@ -37,6 +37,12 @@
 
 struct shadow;
 
+// One xcommit is one transaction, so the shadow table must fit in it.
+#ifdef MAXSHADOWBLOCKS
+_Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
+               "MAXSHADOWBLOCKS must fit in one log transaction");
+#endif
+
 // TEMP until Heril's PR merges: his shadow.c defines these, same names and
 // signatures.  shadow_get() is the one function his table does not have yet
 // and must add: the i-th shadow (0-based) owned by spec, or -1 when there
