@@ -20,6 +20,11 @@ void            bpin(struct buf*);
 void            bunpin(struct buf*);
 struct buf*     bread_raw(uint, uint);
 
+// conflict.c
+void            conflict_init(void);
+void            blockver_touch(uint, uint);
+uint            blockver_version(uint, uint);
+
 // console.c
 void            consoleinit(void);
 void            consoleintr(int);
@@ -82,9 +87,9 @@ struct shadow*  shadow_find(int, uint, uint);
 struct shadow*  shadow_alloc(int, uint, uint, struct buf*);
 void            shadow_free_all(int);
 int             shadow_count(int);
-int             shadow_get(int, int, uint*, uint*, char**);
-int             shadow_read(int, uint, uint, char*);
-int             shadow_put(int, uint, uint, char*);
+int             shadow_get(int, int, uint*, uint*, char**, uint*);
+int             shadow_read(int, uint, uint, char*, uint*);
+int             shadow_put(int, uint, uint, char*, uint);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);

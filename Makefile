@@ -19,6 +19,7 @@ OBJS = \
   $K/syscall.o \
   $K/sysproc.o \
   $K/bio.o \
+  $K/conflict.o \
   $K/fs.o \
   $K/log.o \
   $K/shadow.o \

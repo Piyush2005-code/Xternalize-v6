@@ -26,6 +26,7 @@ main()
     plicinithart();     // ask PLIC for device interrupts
     binit();            // buffer cache
     shadow_init();      // speculative shadow table
+    conflict_init();    // per-block versions for speculative commits
     iinit();            // inode table
     fileinit();         // file table
     spec_init();        // speculation table
