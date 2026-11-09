@@ -248,6 +248,12 @@ test-perm:
 test-spec:
 	python3 scripts/tests/test_spec_e2e.py
 
+# Crash during xcommit: crashat(n) at every crash point, reboot on the same
+# fs.img, file must be wholly old or new (scripts/tests/test_spec_crash.py).
+.PHONY: test-crash
+test-crash:
+	python3 scripts/tests/test_spec_crash.py
+
 .PHONY: fmt
 fmt:
 	clang-format -i $(wildcard kernel/*.[ch] user/*.[ch] mkfs/*.c)
