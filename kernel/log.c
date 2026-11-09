@@ -80,8 +80,9 @@ install_trans(int recovering)
     if (recovering) {
       printk("recovering tail %d dst %d\n", tail, log.lh.block[tail]);
     }
-    struct buf *lbuf = bread_raw(log.dev, log.start + tail + 1); // read log block
-    struct buf *dbuf = bread_raw(log.dev, log.lh.block[tail]);   // read dst
+    struct buf *lbuf =
+      bread_raw(log.dev, log.start + tail + 1);                // read log block
+    struct buf *dbuf = bread_raw(log.dev, log.lh.block[tail]); // read dst
     memmove(dbuf->data, lbuf->data, BSIZE); // copy block to dst
     bwrite(dbuf);                           // write dst to disk
     if (recovering == 0)
