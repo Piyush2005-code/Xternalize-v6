@@ -125,6 +125,64 @@ test_pipe_abort(void)
   check("pipe write dropped by xabort, reader gets end-of-file", n == 0);
 }
 
+// The handout API contract: xbegin() puts the caller in a speculation, and a
+// process forked AFTER xbegin() inherits it (fork copies p->spec), so one
+// xcommit/xabort by the caller covers the child's effects too.  Shown through
+// held pipe output: the child's write to an outside reader is held, delivered
+// together with the caller's at xcommit and dropped at xabort, and the child's
+// own xbegin() nests and fails - direct proof the child is already speculative.
+static void
+test_fork_after_begin(void)
+{
+  int p[2], st, got, n;
+  char buf[32];
+
+  // Commit: the caller begins, then forks; the child and the caller each hold
+  // a write, and one xcommit delivers both, in order, to the outside reader.
+  pipe(p);
+  if (fork() == 0) { // the caller of xbegin
+    close(p[0]);
+    xbegin();
+    if (fork() == 0) {       // inherits the caller's speculation
+      int nested = xbegin(); // already speculative: must fail (-1)
+      write(p[1], "child", 5);
+      exit(nested == -1 ? 0 : 1);
+    }
+    wait(&st); // the child's held write lands first
+    write(p[1], "parent", 6);
+    xcommit();
+    exit(st); // 0 only if the child was speculative
+  }
+  close(p[1]);
+  got = 0; // the reader is outside the speculation: it blocks until xcommit
+  while (got < 11 && (n = read(p[0], buf + got, sizeof(buf) - got)) > 0)
+    got += n;
+  close(p[0]);
+  wait(&st);
+  check("fork after xbegin: child is speculative, xcommit delivers both",
+        st == 0 && got == 11 && memcmp(buf, "childparent", 11) == 0);
+
+  // Abort: the forked child's held write is dropped along with the caller's.
+  pipe(p);
+  if (fork() == 0) {
+    close(p[0]);
+    xbegin();
+    if (fork() == 0) {
+      write(p[1], "child", 5);
+      exit(0);
+    }
+    wait(0);
+    write(p[1], "parent", 6);
+    xabort();
+    exit(0);
+  }
+  close(p[1]);
+  n = read(p[0], buf, sizeof(buf)); // end-of-file: both writes were dropped
+  close(p[0]);
+  wait(0);
+  check("fork after xbegin: xabort drops the child's held write too", n == 0);
+}
+
 // Held data keeps the pipe open after the writer has exited, and is
 // delivered by whoever commits the speculation later.
 static void
@@ -804,6 +862,7 @@ main(int argc, char **argv)
   test_rules();
   test_pipe_commit();
   test_pipe_abort();
+  test_fork_after_begin();
   test_pipe_late_commit();
   test_pipe_inside();
   test_byte_limit();
