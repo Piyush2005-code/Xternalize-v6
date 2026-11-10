@@ -132,12 +132,14 @@ runcmd(struct cmd *cmd)
 }
 
 int
-getcmd(char *buf, int nbuf)
+getcmd(char *buf, int nbuf, int interactive)
 {
-  if (getuid() == 0)
-    write(2, "admin# ", 7);
-  else
-    write(2, "user$ ", 6);
+  if (interactive) {
+    if (getuid() == 0)
+      write(2, "admin# ", 7);
+    else
+      write(2, "user$ ", 6);
+  }
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if (buf[0] == 0) // EOF
@@ -146,7 +148,7 @@ getcmd(char *buf, int nbuf)
 }
 
 int
-main(void)
+main(int argc, char *argv[])
 {
   static char buf[100];
   int fd;
@@ -161,8 +163,16 @@ main(void)
     }
   }
 
+  if (argc > 1) {
+    close(0);
+    if (open(argv[1], O_RDONLY) < 0) {
+      fprintf(2, "cannot open %s\n", argv[1]);
+      exit(1);
+    }
+  }
+
   // Read and run input commands.
-  while (getcmd(buf, sizeof(buf)) >= 0) {
+  while (getcmd(buf, sizeof(buf), argc <= 1) >= 0) {
     char *cmd = buf;
     while (*cmd == ' ' || *cmd == '\t')
       cmd++;
