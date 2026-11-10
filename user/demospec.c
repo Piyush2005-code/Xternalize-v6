@@ -74,7 +74,8 @@ run_demo(int do_commit)
     fprintf(2, "demospec: setup failed: a must exist and b must not exist\n");
     return -1;
   }
-  printf("    Initial state: file 'a' exists (content: 'hello'), file 'b' does not exist.\n");
+  printf(
+    "    Initial state: file 'a' exists (content: 'hello'), file 'b' does not exist.\n");
 
   // Step 2: Open speculation
   printf("[2] Opening speculation (xbegin)...\n");
@@ -160,7 +161,8 @@ run_demo(int do_commit)
   }
 
   // Step 6: Verify final state
-  printf("[6] Verifying final state after %s:\n", do_commit ? "commit" : "abort");
+  printf("[6] Verifying final state after %s:\n",
+         do_commit ? "commit" : "abort");
   if (!do_commit) {
     // Abort check: leaves no trace
     if (!file_exists("a")) {
@@ -190,7 +192,10 @@ run_demo(int do_commit)
     }
     read_file("b", buf, sizeof(buf));
     if (strcmp(buf, "hi\n") != 0) {
-      fprintf(2, "FAIL: file 'b' content incorrect after commit: got '%s', expected 'hi\\n'\n", buf);
+      fprintf(
+        2,
+        "FAIL: file 'b' content incorrect after commit: got '%s', expected 'hi\\n'\n",
+        buf);
       return -1;
     }
     printf("    RESULT: 'a' was deleted, 'b' was created with 'hi'.\n");
