@@ -164,6 +164,7 @@ UPROGS=\
 	$U/_xabort\
 	$U/_spectest\
 	$U/_speccost\
+	$U/_demospec\
 
 # pathtest sweeps every program in UPROGS, so generate its name list.
 $U/uprogs.h: Makefile
@@ -172,8 +173,8 @@ $U/uprogs.h: Makefile
 
 $U/pathtest.o: $U/uprogs.h
 
-fs.img: mkfs/mkfs README $(UPROGS)
-	mkfs/mkfs fs.img README $(UPROGS)
+fs.img: mkfs/mkfs README demoscript $(UPROGS)
+	mkfs/mkfs fs.img README demoscript $(UPROGS)
 
 -include kernel/*.d user/*.d
 
