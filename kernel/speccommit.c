@@ -21,9 +21,10 @@
 //   and the point just after end_op() returns (before any output).
 //
 // The shadow table itself is not here.  The weak functions below are
-// TEMPORARY stand-ins until Heril's shadow table is merged; his real
-// definitions replace them at link time.  They make every speculation
-// look like it has no shadows, so file changes are not held.
+// stand-ins: they make every speculation look like it has no shadows, so
+// file changes are not held.  A real shadow.c would replace them at link
+// time; shadow_find() and shadow_alloc() were dropped because nothing
+// calls them.
 
 #include "types.h"
 #include "param.h"
@@ -41,10 +42,10 @@ _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
                "MAXSHADOWBLOCKS must fit in one log transaction");
 #endif
 
-// TEMP until Heril's PR merges: his shadow.c defines these, same names and
-// signatures.  shadow_get() is the one function his table does not have yet
-// and must add: the i-th shadow (0-based) owned by spec, or -1 when there
-// are fewer.  *data points into the table and stays valid until
+// Weak stand-ins until a real shadow.c is merged; his definitions replace
+// these at link time.  shadow_get() is the one function his table does not
+// have yet and must add: the i-th shadow (0-based) owned by spec, or -1
+// when there are fewer.  *data points into the table and stays valid until
 // shadow_free_all(spec).
 void shadow_free_all(int) __attribute__((weak));
 int shadow_count(int) __attribute__((weak));
