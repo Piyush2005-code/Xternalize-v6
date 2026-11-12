@@ -35,8 +35,6 @@
 #include "buf.h"
 #include "defs.h"
 
-struct shadow;
-
 // One xcommit is one transaction, so the shadow table must fit in it.
 #ifdef MAXSHADOWBLOCKS
 _Static_assert(MAXSHADOWBLOCKS <= SPECBLOCKS,
