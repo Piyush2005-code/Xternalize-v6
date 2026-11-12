@@ -164,27 +164,6 @@ int            shadow_get(int spec, int i, uint *dev, uint *blockno, char **data
 6. The shadow table is shared by all speculations (64 in total), not per
    speculation: one large speculation can starve another.
 
-## Cost
-
-`scripts/bench_spec_cost.py` (CPUS=1, ms per KB written, uptime tick = 0.1 s,
-measured on a throwaway local merge with Heril's table, see PR; the numbers
-move with the merged code):
-
-| KB | plain | inside a speculation | xbegin+write+xcommit | xbegin+write+xabort |
-|---|---|---|---|---|
-| 1 | 10.9 | 1.37 | 10.9 | 1.66 |
-| 4 | 10.2 | 0.37 | 5.5 | 0.49 |
-| 16 | 10.2 | 0.17 | 3.9 | 0.24 |
-| 48 | 10.4 | 0.13 | 3.6 | 0.16 |
-| 56 | 9.8 | **write fails** | **write fails** | **write fails** |
-| 64 | 10.2 | **write fails** | **write fails** | **write fails** |
-
-Plain writes pay one disk transaction per 3 KB. Inside a speculation they cost
-memory only; commit pays one transaction for everything, which is why its cost
-per KB falls as the speculation grows. At 56 KB the shadow table (64 blocks,
-minus the reservation for one operation) runs out and the write returns -1: that
-is the cliff, left in the CSV and the plot.
-
 ## Tests
 
 * `user/spectest.c`: abort and commit file effects (unlink, overwrite, create),
@@ -192,7 +171,6 @@ is the cliff, left in the CSV and the plot.
   exhaustion, and the commit/abort error paths. File cases print
   `SKIP <case> (needs shadow table)` until the table is merged.
 * `scripts/tests/test_spec_crash.py`: the crash-point table above.
-* `scripts/bench_spec_cost.py`: write cost inside and outside a speculation.
 
 Negative controls (run, not committed): replaying the output **before**
 `end_op()` makes every crash round fail ("printed" for a commit that crashed);
