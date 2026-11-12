@@ -262,22 +262,6 @@ spec_end(int commit)
   return commit == commit_requested ? 0 : -1;
 }
 
-// May a member of speculation id still add to its shadows?  Not once the
-// speculation is ending (commit in progress or abort): the shadow layer's
-// log_write() must return -1 then (docs/speculation-commit.md).
-int
-spec_can_shadow(int id)
-{
-  struct spec *s;
-  int ok;
-
-  acquire(&spec_lock);
-  s = lookup(id);
-  ok = s != 0 && !s->ending;
-  release(&spec_lock);
-  return ok;
-}
-
 // Hold n bytes that the calling (speculative) process is writing to pipe
 // pi, or to the console if pi is 0, instead of writing them.  The bytes
 // come from user space if user_src is set.  Returns n, or -1 if the
