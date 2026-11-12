@@ -134,7 +134,6 @@ int             spec_end(int);
 int             spec_hold(struct pipe*, int, uint64, int);
 int             spec_pull(struct pipe*, uint64, int);
 void            spec_reclaim_session(int);
-int             spec_can_shadow(int);
 
 // speccommit.c
 int             spec_commit_files(int);
