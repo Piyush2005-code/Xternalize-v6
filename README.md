@@ -111,7 +111,7 @@ Project 5 is substantially complete and tested: the four speculation calls, `for
 
 ## Credits
 
-Built on **[xv6-riscv](https://github.com/mit-pdos/xv6-riscv)** by MIT PDOS — a re-implementation of Unix v6 for RISC-V. Course project for Operating Systems at IIT Jodhpur, by Piyush Singh Bhati, Brijesh Thakkar and Heril Mistry; per-commit authorship is preserved in the git history.
+Built on **[xv6-riscv](https://github.com/mit-pdos/xv6-riscv)** by MIT PDOS — a re-implementation of Unix v6 for RISC-V. Course project for Operating Systems at IIT Jodhpur, by Piyush Singh Bhati, Brijesh Thakkar, Chaitanya Singh and Heril Mistry; per-commit authorship is preserved in the git history.
 
 ## License & attribution
 
