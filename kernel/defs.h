@@ -150,6 +150,8 @@ void            spec_reclaim_session(int);
 int             spec_can_shadow(int);
 void            spec_mark_failed(int);
 int             spec_failed(int);
+void            spec_op_enter(void);
+void            spec_op_leave(void);
 
 // speccommit.c
 int             spec_commit_files(int);

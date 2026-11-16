@@ -106,4 +106,8 @@ struct proc {
   int fsfail; // a write of the current fs operation was refused
               // (log.c op_failed()); cleared by begin_op()
   int sid;    // Login-session id (its shell's pid), 0 if none
+  int specop; // speculation this fs operation is counted against for quiesce
+              // (set by begin_op, cleared by end_op); 0 if none
+  int committing; // running its own speculation's xcommit/xabort: its commit
+                  // transaction must not count as a member operation
 };

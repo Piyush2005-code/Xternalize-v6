@@ -127,6 +127,8 @@ found:
   p->uid = 0;
   p->spec = 0;
   p->sid = 0;
+  p->specop = 0;
+  p->committing = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -172,6 +174,8 @@ freeproc(struct proc *p)
   p->xstate = 0;
   p->spec = 0;
   p->sid = 0;
+  p->specop = 0;
+  p->committing = 0;
   p->state = UNUSED;
 }
 

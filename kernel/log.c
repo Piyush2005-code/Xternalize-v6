@@ -177,6 +177,11 @@ begin_op_n(int n)
       break;
     }
   }
+  // The op now holds a transaction slot and may write shadows: count it
+  // against its speculation so xcommit/xabort can quiesce (spec.c).  A
+  // speculative op admitted here is let finish even once its speculation
+  // starts ending; one admitted after that is refused, never cut in half.
+  spec_op_enter();
 }
 
 // Was any write of this process's current operation (since its begin_op())
@@ -206,6 +211,10 @@ void
 end_op_n(int n)
 {
   int do_commit = 0;
+
+  // This operation's shadow writes are all done; drop it from its
+  // speculation's in-flight count and wake a waiting xcommit/xabort (spec.c).
+  spec_op_leave();
 
   acquire(&log.lock);
   log.outstanding -= 1;

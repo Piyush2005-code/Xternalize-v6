@@ -8,16 +8,23 @@ bridge: what `xcommit` does with the shadows and in which order.
 
 Files: `kernel/speccommit.c` (new), a small call site in `kernel/spec.c`
 (`spec_end`), `begin_op_n`/`end_op_n` and three crash points in `kernel/log.c`,
-the `crashat` syscall.
+the `crashat` syscall. The quiesce adds `spec_op_enter`/`spec_op_leave` in
+`kernel/spec.c` (called from `begin_op`/`end_op`) and the `specop` and
+`committing` fields in `kernel/proc.h`.
 
 ## The protocol
 
 `spec_end(commit)` in `kernel/spec.c`, for the caller's speculation `id`:
 
-1. **Mark it ending** under `spec_lock`, then drop the lock. From now on
-   `spec_can_shadow(id)` is false and members' new shadow writes must fail with
-   -1. Unknown id, double commit, commit after abort and commit while already
-   ending all return -1 here and never panic.
+1. **Mark it ending and quiesce** under `spec_lock`. Setting `ending` stops any
+   *new* member operation from being admitted; `spec_end` then waits for the
+   operations already in flight to finish (the in-flight count falling to zero)
+   before going on. An operation admitted before `ending` is let run to
+   completion - `spec_can_shadow(id)` keeps returning true for that one member,
+   so it adds its remaining shadows - while any operation that arrives after
+   `ending` has its first shadow write refused with -1, so it fails whole rather
+   than half. Unknown id, double commit, commit after abort and commit while
+   already ending all return -1 here and never panic.
 2. **Apply the shadows**, `spec_commit_files(id)`:
    1. the caller is made non-speculative for the loop, so `bread()` and
       `log_write()` reach the real blocks and not its own shadows;
@@ -34,6 +41,23 @@ the `crashat` syscall.
 the session-reclaim path (`discard_slot`).
 
 No spinlock is held across `bread`, `begin_op_n`, `end_op_n` or the pipe replay.
+
+### Why quiesce before the snapshot
+
+A member's file operation stages its blocks in the shadow table one
+`log_write()` at a time, between its `begin_op()` and `end_op()`. If the commit
+snapshotted while such an operation were still running, it could capture some of
+the operation's blocks and not the rest - a half-done operation on disk - and an
+abort could free the shadows while the member was still writing them. So
+`spec_end` counts each member operation against its speculation
+(`spec_op_enter`/`spec_op_leave`, called from `begin_op`/`end_op` in
+`kernel/log.c`) and, once `ending` is set, waits for that count to reach zero
+before it reads or frees the table. An operation already admitted finishes
+normally; one that starts after `ending` is refused from its first write. The
+committing process's own commit transaction is excluded from the count, or it
+would wait for itself. The snapshot is therefore always a set of whole
+operations - the stable state the commit-time conflict rule will compare against,
+which is why this lands before that rule.
 
 ### Why this is crash-atomic
 
@@ -170,17 +194,17 @@ aborted; reads inside it may show the half-done state.
 walks; `shadow_count(spec)` says how many to expect.
 
 **4. Committing check.** `shadow_alloc` and `shadow_put` ask `spec_can_shadow()`
-(spec.c's existing `ending` flag) with the table lock held; the commit reads the
-table after `ending` is set. A member write therefore either lands before the
-commit counts the shadows or fails. Lock order: `stable.lock`, then `spec_lock`.
+(spec.c's `ending` flag) with the table lock held; the commit reads the table
+after `ending` is set and after the in-flight operations have drained (the
+quiesce above). Once `ending` is set only the one still-draining in-flight
+operation may add shadows; every other member write fails. A member write
+therefore either lands before the commit counts the shadows or fails. Lock
+order: `stable.lock`, then `spec_lock`.
 
 Remaining limits of this layer:
 
 * The table is shared by all speculations (64 blocks in total), not per
   speculation: one large speculation can starve another.
-* A member in the middle of a multi-block syscall while another member commits
-  can have the first half committed and the second half refused (the commit
-  does not wait for in-flight member operations).
 * A file descriptor to a file created inside an aborted speculation stays open
   but every use returns -1; `xabort` does not close descriptors.
 * Whole-block shadows: an outside process that changes a block (bitmap, inode

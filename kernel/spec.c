@@ -40,13 +40,15 @@ struct held {
 };
 
 struct spec {
-  int id;     // speculation id, 0 if this slot is free
-  int uid;    // user who began it; only they (or admin) may join
-  int owner;  // login session that owns it; reclaimed when it exits
-  int ending; // commit or abort in progress: hold nothing more
-  int failed; // a file write was refused (shadow table full): the changes
-              // are half done, so xcommit must refuse and abort instead
-  int nheld;  // records in use
+  int id;       // speculation id, 0 if this slot is free
+  int uid;      // user who began it; only they (or admin) may join
+  int owner;    // login session that owns it; reclaimed when it exits
+  int ending;   // commit or abort in progress: hold nothing more
+  int failed;   // a file write was refused (shadow table full): the changes
+                // are half done, so xcommit must refuse and abort instead
+  int inflight; // member fs operations in progress (begin_op..end_op); xcommit
+                // and xabort quiesce by waiting for this to fall to zero
+  int nheld;    // records in use
   struct held held[NHELD];
   int used; // bytes of buf in use
   char buf[HELDBYTES];
@@ -145,6 +147,7 @@ spec_begin(void)
   s->owner = p->sid;
   s->ending = 0;
   s->failed = 0;
+  s->inflight = 0;
   s->nheld = 0;
   s->used = 0;
   acquire(&p->lock);
@@ -239,7 +242,26 @@ spec_end(int commit)
     return -1;
   }
   s->ending = 1;
+
+  // Quiesce.  Now that ending is set, no new member operation is admitted
+  // (log.c spec_op_enter), so wait here for the ones already in flight to
+  // finish.  Only then is the shadow table a set of whole operations: it
+  // never holds a half-done one, so the conflict check and the commit act
+  // on a stable snapshot, and an abort never frees shadows out from under a
+  // member that is still writing them.
+  while (s->inflight > 0) {
+    sleep_prepare(&s->inflight);
+    release(&spec_lock);
+    sleep();
+    acquire(&spec_lock);
+  }
   release(&spec_lock);
+
+  // Our own commit transaction (spec_commit_files) runs begin_op/end_op
+  // while this process is still in the speculation; mark it committing so
+  // that transaction is not counted as a member operation (it would then
+  // wait for itself).
+  p->committing = 1;
 
   // Commit order (docs/speculation-commit.md): the file changes go to disk
   // in one log transaction first, and only after end_op() has returned do
@@ -251,6 +273,7 @@ spec_end(int commit)
 
   proc_leave_spec(id);
   spec_discard_files(id); // the shadows are on disk now (or dropped)
+  p->committing = 0;
 
   for (int i = 0; i < s->nheld; i++) {
     if (commit)
@@ -265,20 +288,69 @@ spec_end(int commit)
   return commit == commit_requested ? 0 : -1;
 }
 
-// May a member of speculation id still add to its shadows?  Not once the
-// speculation is ending (commit in progress or abort): the shadow layer's
-// log_write() must return -1 then (docs/speculation-commit.md).
+// May a member of speculation id still add to its shadows?  Yes while the
+// slot is live.  Once it is ending (an xcommit or xabort is quiescing), only
+// the one in-flight operation that was already admitted (p->specop == id)
+// may finish its shadows; any other write returns -1 (docs/speculation-commit.md).
 int
 spec_can_shadow(int id)
 {
+  struct proc *p = myproc();
   struct spec *s;
   int ok;
 
   acquire(&spec_lock);
   s = lookup(id);
-  ok = s != 0 && !s->ending;
+  ok = s != 0 && (!s->ending || (p != 0 && p->specop == id));
   release(&spec_lock);
   return ok;
+}
+
+// Count the calling process's fs operation (the one begin_op just started)
+// against its speculation, so xcommit/xabort can wait for it.  Called from
+// begin_op once the op holds a log transaction slot.  A member admitted here
+// is let run to completion even if the speculation starts ending meanwhile;
+// an operation that arrives after ending is not admitted, and its shadow
+// writes are refused (spec_can_shadow), so it fails whole, never half.  The
+// committing process's own transaction is excluded.
+void
+spec_op_enter(void)
+{
+  struct proc *p = myproc();
+  struct spec *s;
+
+  if (p == 0)
+    return;
+  p->specop = 0;
+  if (p->spec == 0 || p->committing)
+    return;
+
+  acquire(&spec_lock);
+  s = lookup(p->spec);
+  if (s != 0 && !s->ending) {
+    s->inflight++;
+    p->specop = p->spec; // remember the slot we counted, to uncount it
+  }
+  release(&spec_lock);
+}
+
+// The calling process's fs operation has finished (end_op): uncount it and,
+// if its speculation is now quiet, wake an xcommit/xabort waiting to quiesce.
+void
+spec_op_leave(void)
+{
+  struct proc *p = myproc();
+  struct spec *s;
+
+  if (p == 0 || p->specop == 0)
+    return;
+
+  acquire(&spec_lock);
+  s = lookup(p->specop);
+  if (s != 0 && --s->inflight == 0)
+    wakeup(&s->inflight);
+  p->specop = 0;
+  release(&spec_lock);
 }
 
 // A write inside speculation id was refused because the shadow table is
